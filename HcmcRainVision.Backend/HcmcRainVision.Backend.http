@@ -1,0 +1,13 @@
+@HcmcRainVision.Backend_HostAddress = http://localhost:5057
+
+# Test endpoint WeatherForecast (mặc định)
+GET {{HcmcRainVision.Backend_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
+
+# Test API Weather Latest (Chính - Trả về dữ liệu mưa trong 30 phút)
+GET {{HcmcRainVision.Backend_HostAddress}}/api/weather/latest
+Accept: application/json
+
+###
