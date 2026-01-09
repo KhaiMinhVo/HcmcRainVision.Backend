@@ -9,6 +9,7 @@ namespace HcmcRainVision.Backend.Data
 
         // Khai báo bảng
         public DbSet<WeatherLog> WeatherLogs { get; set; }
+        public DbSet<Camera> Cameras { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

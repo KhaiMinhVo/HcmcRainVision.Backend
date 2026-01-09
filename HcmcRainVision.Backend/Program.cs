@@ -3,6 +3,7 @@ using HcmcRainVision.Backend.BackgroundJobs;
 using HcmcRainVision.Backend.Services.Crawling;
 using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.AI;
+using HcmcRainVision.Backend.Services.Notification;
 using HcmcRainVision.Backend;
 using Microsoft.EntityFrameworkCore;
 
@@ -22,13 +23,15 @@ builder.Services.AddSingleton<IImagePreProcessor, ImagePreProcessor>();
 // builder.Services.AddSingleton<RainPredictionService>();
 
 // 4. Đăng ký Background Worker (Chạy ngầm)
-// TẠM TẮT khi development để tránh đơ máy
-// builder.Services.AddHostedService<RainScanningWorker>();
+builder.Services.AddHostedService<RainScanningWorker>();
 
 // 5. Đăng ký AI Service
 builder.Services.AddSingleton<RainPredictionService>();
 
-// 6. Đăng ký Controllers
+// 6. Đăng ký Email Service
+builder.Services.AddTransient<IEmailService, EmailService>();
+
+// 7. Đăng ký Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -61,6 +64,10 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("AllowReactApp");
+
+// Cho phép truy cập file trong thư mục wwwroot
+app.UseStaticFiles();
+
 app.UseAuthorization();
 app.MapControllers();
 

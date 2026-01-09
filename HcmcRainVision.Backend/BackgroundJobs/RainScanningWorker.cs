@@ -1,6 +1,11 @@
+using Microsoft.EntityFrameworkCore;
+using NetTopologySuite.Geometries; // Thư viện xử lý bản đồ
+using HcmcRainVision.Backend.Data;
+using HcmcRainVision.Backend.Models.Entities;
+using HcmcRainVision.Backend.Services.AI;
 using HcmcRainVision.Backend.Services.Crawling;
 using HcmcRainVision.Backend.Services.ImageProcessing;
-using HcmcRainVision.Backend.Services.AI;
+using HcmcRainVision.Backend.Services.Notification; // Thêm using này
 
 namespace HcmcRainVision.Backend.BackgroundJobs
 {
@@ -8,114 +13,127 @@ namespace HcmcRainVision.Backend.BackgroundJobs
     {
         private readonly ILogger<RainScanningWorker> _logger;
         private readonly IServiceProvider _serviceProvider;
+        private readonly IWebHostEnvironment _env;
 
-        public RainScanningWorker(ILogger<RainScanningWorker> logger, IServiceProvider serviceProvider)
+        public RainScanningWorker(
+            ILogger<RainScanningWorker> logger, 
+            IServiceProvider serviceProvider,
+            IWebHostEnvironment env)
         {
             _logger = logger;
             _serviceProvider = serviceProvider;
+            _env = env;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            // Tạo thư mục lưu ảnh nếu chưa có: wwwroot/images/rain_logs
+            string webRootPath = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+            string saveFolder = Path.Combine(webRootPath, "images", "rain_logs");
+            
+            if (!Directory.Exists(saveFolder))
+            {
+                Directory.CreateDirectory(saveFolder);
+            }
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
 
-                // Tạo Scope mới để gọi Database/Service (Bắt buộc trong Background Service)
-               // Trong method ExecuteAsync của RainScanningWorker.cs
+                try
+                {
+                    using (var scope = _serviceProvider.CreateScope())
+                    {
+                        // 1. Lấy các Service cần thiết
+                        var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
+                        var processor = scope.ServiceProvider.GetRequiredService<IImagePreProcessor>();
+                        var aiService = scope.ServiceProvider.GetRequiredService<RainPredictionService>();
+                        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
 
-using (var scope = _serviceProvider.CreateScope())
-{
-    // Lấy service crawler ra
-    var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
+                        // 2. Lấy danh sách Camera từ Database (Thay vì hardcode)
+                        var cameras = await dbContext.Cameras.ToListAsync(stoppingToken);
 
-    // Giả sử đây là danh sách URL camera (thực tế bạn sẽ lấy list này từ Database)
-    var cameraUrls = new List<string> 
-    { 
-        "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=CAMERA_ID_THAT", // URL thật (ví dụ)
-        "TEST_MODE_RAIN" // URL giả để test
-    };
+                        if (cameras.Count == 0)
+                        {
+                            _logger.LogWarning("⚠️ Không tìm thấy camera nào trong Database!");
+                        }
 
-    foreach (var url in cameraUrls)
-    {
-        // Gọi hàm crawl
-        byte[]? imageBytes = await crawler.FetchImageAsync(url);
+                        foreach (var cam in cameras)
+                        {
+                            // --- BƯỚC 1: CRAWL ---
+                            byte[]? rawBytes = await crawler.FetchImageAsync(cam.SourceUrl);
+                            if (rawBytes == null || rawBytes.Length == 0) continue;
 
-        if (imageBytes != null && imageBytes.Length > 0)
-        {
-            _logger.LogInformation($"Đã tải ảnh thành công! Kích thước: {imageBytes.Length} bytes");
+                            // --- BƯỚC 2: PRE-PROCESS ---
+                            // Cắt và resize ảnh
+                            byte[]? processedBytes = processor.ProcessForAI(rawBytes);
+                            if (processedBytes == null) continue;
 
-            // TODO: Bước tiếp theo - Gửi imageBytes này vào Service AI để dự đoán
-            // var isRaining = await aiService.PredictRainAsync(imageBytes);
-        }
-    }
-}
-                // Nghỉ 5 phút trước khi chạy lại
-using (var scope = _serviceProvider.CreateScope())
-{
-    var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
-    
-    // Inject thêm PreProcessor
-    var processor = scope.ServiceProvider.GetRequiredService<IImagePreProcessor>();
+                            // --- BƯỚC 3: AI DETECT ---
+                            var prediction = aiService.Predict(processedBytes);
 
-    var cameraUrls = new List<string> { "TEST_MODE" }; 
+                            // --- BƯỚC 4: LOGIC LƯU ẢNH (Chỉ lưu khi có mưa để tiết kiệm ổ cứng) ---
+                            string? savedImageUrl = null;
+                            
+                            if (prediction.IsRaining)
+                            {
+                                // Tạo tên file unique: CAM_ID_TimeStamp.jpg
+                                string fileName = $"{cam.Id}_{DateTime.Now.Ticks}.jpg";
+                                string fullPath = Path.Combine(saveFolder, fileName);
 
-    foreach (var url in cameraUrls)
-    {
-        // Bước 1: Crawl
-        byte[]? rawBytes = await crawler.FetchImageAsync(url);
+                                // Lưu file đã xử lý (processedBytes) để nhẹ hơn
+                                await File.WriteAllBytesAsync(fullPath, processedBytes, stoppingToken);
 
-        if (rawBytes != null && rawBytes.Length > 0)
-        {
-            // Bước 2: Xử lý ảnh (Cắt + Resize)
-            byte[]? processedBytes = processor.ProcessForAI(rawBytes, 224, 224);
+                                // Đường dẫn để Frontend truy cập
+                                savedImageUrl = $"/images/rain_logs/{fileName}";
+                            }
 
-            if (processedBytes != null)
-            {
-                _logger.LogInformation($"Xử lý ảnh xong! Size gốc: {rawBytes.Length} -> Size mới: {processedBytes.Length}");
-                
-                // Lưu ý: Lúc này ảnh đã sạch, chỉ còn bầu trời và mặt đường, kích thước 224x224.
-                // Sẵn sàng để đưa vào model ML.NET ở bước tiếp theo.
-                
-                // Demo lưu ảnh ra đĩa để bạn kiểm tra xem nó cắt đúng chưa
-                await File.WriteAllBytesAsync($"processed_debug_{DateTime.Now.Ticks}.jpg", processedBytes);
-            }
-        }
-    }
-}
+                            // --- BƯỚC 5: LƯU LOG VÀO DB ---
+                            var weatherLog = new WeatherLog
+                            {
+                                CameraId = cam.Id,
+                                Timestamp = DateTime.UtcNow,
+                                IsRaining = prediction.IsRaining,
+                                Confidence = prediction.Confidence,
+                                Location = new Point(cam.Longitude, cam.Latitude) { SRID = 4326 },
+                                ImageUrl = savedImageUrl // Lưu đường dẫn vào đây
+                            };
 
+                            dbContext.WeatherLogs.Add(weatherLog);
+                            
+                            _logger.LogInformation($"✅ Saved: {cam.Name} | Mưa: {prediction.IsRaining} ({prediction.Confidence*100:0}%) | Img: {savedImageUrl}");
 
+                            // --- BƯỚC 6: GỬI EMAIL CẢNH BÁO (Nếu có mưa và độ tin cậy cao) ---
+                            // TẠM GIẢM NGƯỠNG XUỐNG 0.7 (70%) ĐỂ TEST EMAIL
+                            if (prediction.IsRaining && prediction.Confidence > 0.7)
+                            {
+                                string subject = $"⚠️ CẢNH BÁO MƯA: Phát hiện tại Camera {cam.Name}";
+                                string body = $@"
+                                    <h3>Hệ thống HCMC Rain Vision phát hiện mưa!</h3>
+                                    <p><b>Camera:</b> {cam.Name} ({cam.Id})</p>
+                                    <p><b>Thời gian:</b> {DateTime.Now}</p>
+                                    <p><b>Độ tin cậy:</b> {prediction.Confidence * 100:0.00}%</p>
+                                    <p>Vui lòng mang theo áo mưa hoặc tìm nơi trú ẩn.</p>
+                                    <hr/>
+                                    <small>Đây là email tự động.</small>
+                                ";
 
-                using (var scope = _serviceProvider.CreateScope())
-{
-    var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
-    var processor = scope.ServiceProvider.GetRequiredService<IImagePreProcessor>();
-    var aiService = scope.ServiceProvider.GetRequiredService<RainPredictionService>(); // Lấy AI Service
+                                // Gửi mail (Thay email này bằng email thật của bạn để test)
+                                await emailService.SendEmailAsync("khaivpmse184623@fpt.edu.vn", subject, body);
+                            }
+                        }
 
-    var cameraUrls = new List<string> { "TEST_MODE" }; 
+                        // Commit transaction
+                        await dbContext.SaveChangesAsync(stoppingToken);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError($"Worker Error: {ex.Message}");
+                }
 
-    foreach (var url in cameraUrls)
-    {
-        // 1. Crawl
-        byte[]? rawBytes = await crawler.FetchImageAsync(url);
-        if (rawBytes == null) continue;
-
-        // 2. Pre-process
-        byte[]? processedBytes = processor.ProcessForAI(rawBytes);
-        if (processedBytes == null) continue;
-
-        // 3. AI Detect
-        var prediction = aiService.Predict(processedBytes);
-
-        // 4. Log kết quả (Sau này sẽ là Lưu vào DB)
-        _logger.LogInformation($"📸 Camera: {url}");
-        _logger.LogInformation($"🌧️ Kết quả: {(prediction.IsRaining ? "CÓ MƯA" : "TẠNH RÁO")}");
-        _logger.LogInformation($"🎯 Độ tin cậy: {prediction.Confidence * 100:0.00}% - Nguồn: {prediction.Message}");
-        _logger.LogInformation("------------------------------------------------");
-        
-        // TODO: Bước tiếp theo - Lưu vào PostgreSQL (PostGIS)
-    }
-}
+                // Nghỉ 5 phút
                 await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
             }
         }

@@ -8,10 +8,30 @@ public static class TestDataSeeder
 {
     public static async Task SeedTestData(AppDbContext context)
     {
-        // Kiểm tra đã có dữ liệu chưa
+        // 1. Seed Cameras (Nếu chưa có)
+        if (!context.Cameras.Any())
+        {
+            Console.WriteLine("📷 Đang thêm dữ liệu Camera mẫu...");
+            var cameras = new[]
+            {
+                new Camera 
+                { 
+                    Id = "CAM_TEST_01", 
+                    Name = "Camera Test Mode", 
+                    SourceUrl = "TEST_MODE", // Dùng chế độ giả lập
+                    Latitude = 10.762622, 
+                    Longitude = 106.660172 
+                }
+                // Bạn có thể thêm link camera thật vào đây nếu có
+            };
+            await context.Cameras.AddRangeAsync(cameras);
+            await context.SaveChangesAsync();
+        }
+
+        // 2. Seed WeatherLogs (Nếu chưa có)
         if (context.WeatherLogs.Any())
         {
-            Console.WriteLine("✅ Database đã có dữ liệu, bỏ qua seeding.");
+            Console.WriteLine("✅ Database đã có dữ liệu WeatherLogs, bỏ qua seeding.");
             return;
         }
 

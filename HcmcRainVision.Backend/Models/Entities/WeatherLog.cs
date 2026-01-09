@@ -19,5 +19,8 @@ namespace HcmcRainVision.Backend.Models.Entities
         public float Confidence { get; set; } // Độ tin cậy (0.0 - 1.0)
 
         public DateTime Timestamp { get; set; } // Thời điểm ghi nhận
+
+        // Lưu đường dẫn ảnh tương đối (VD: /images/rain_logs/cam1_123.jpg)
+        public string? ImageUrl { get; set; }
     }
 }

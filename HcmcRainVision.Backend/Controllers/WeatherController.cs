@@ -33,8 +33,8 @@ namespace HcmcRainVision.Backend.Controllers
             {
                 Id = x.Id,
                 CameraId = x.CameraId,
-                Latitude = x.Location.Y,  // Y là Vĩ độ
-                Longitude = x.Location.X, // X là Kinh độ
+                Latitude = x.Location?.Y ?? 0,  // Y là Vĩ độ
+                Longitude = x.Location?.X ?? 0, // X là Kinh độ
                 IsRaining = x.IsRaining,
                 Confidence = x.Confidence,
                 TimeAgo = GetTimeAgo(x.Timestamp)
