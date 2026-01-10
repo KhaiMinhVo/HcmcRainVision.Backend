@@ -42,7 +42,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                 _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
 
                 // --- 1. DỌN DẸP ẢNH CŨ (Tự động xóa ảnh quá 7 ngày để không đầy ổ cứng) ---
-                CleanupOldImages(saveFolder);
+                await CleanupOldData(stoppingToken);
 
                 try
                 {
@@ -98,14 +98,28 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                 bool shouldAlert = cam.LastRainAlertSent == null || 
                                                    (DateTime.UtcNow - cam.LastRainAlertSent.Value).TotalMinutes > 30;
 
-                                if (prediction.IsRaining)
+                                // --- CẢI TIẾN: Lưu ảnh để retrain model (False negative detection) ---
+                                bool isUnsure = prediction.Confidence > 0.4f && prediction.Confidence < 0.6f;
+                                bool randomSample = new Random().Next(0, 100) < 5; // 5% xác suất lưu mẫu ngẫu nhiên
+                                bool shouldSaveImage = prediction.IsRaining || isUnsure || randomSample;
+
+                                if (shouldSaveImage)
                                 {
-                                    // Chỉ lưu ảnh nếu đang mưa
+                                    // Lưu ảnh cho training/debugging
                                     string fileName = $"{cam.Id}_{DateTime.Now.Ticks}.jpg";
                                     string fullPath = Path.Combine(saveFolder, fileName);
                                     await File.WriteAllBytesAsync(fullPath, processedBytes, token);
                                     savedImageUrl = $"/images/rain_logs/{fileName}";
 
+                                    // Log lý do lưu ảnh
+                                    if (isUnsure)
+                                        _logger.LogInformation($"💾 Lưu ảnh uncertain ({prediction.Confidence:0.00}) cho {cam.Id}");
+                                    else if (randomSample && !prediction.IsRaining)
+                                        _logger.LogInformation($"💾 Lưu ảnh sample ngẫu nhiên (no rain) cho {cam.Id}");
+                                }
+
+                                if (prediction.IsRaining)
+                                {
                                     if (shouldAlert)
                                     {
                                         // 1. Gửi SignalR
@@ -178,22 +192,63 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             }
         }
 
-        private void CleanupOldImages(string folderPath)
+        /// <summary>
+        /// Dọn dẹp dữ liệu cũ: Xóa cả file ảnh VÀ record trong Database
+        /// Đảm bảo đồng bộ giữa filesystem và DB để tránh lỗi 404
+        /// </summary>
+        private async Task CleanupOldData(CancellationToken token)
         {
-            try 
+            try
             {
-                var cutoff = DateTime.Now.AddDays(-7);
-                var files = Directory.GetFiles(folderPath);
-                foreach (var file in files)
+                using var scope = _serviceProvider.CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var cutoff = DateTime.UtcNow.AddDays(-7);
+
+                // 1. Tìm các logs cũ có ảnh
+                var oldLogs = await dbContext.WeatherLogs
+                    .Where(x => x.Timestamp < cutoff && x.ImageUrl != null)
+                    .ToListAsync(token);
+
+                if (oldLogs.Count > 0)
                 {
-                    var fi = new FileInfo(file);
-                    if (fi.CreationTime < cutoff)
+                    // 2. Xóa file trên đĩa
+                    string webRootPath = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+                    int deletedFiles = 0;
+
+                    foreach (var log in oldLogs)
                     {
-                        fi.Delete();
+                        if (!string.IsNullOrEmpty(log.ImageUrl))
+                        {
+                            // Chuyển URL relative thành đường dẫn tuyệt đối
+                            // log.ImageUrl vd: "/images/rain_logs/abc.jpg" -> bỏ dấu / đầu
+                            var filePath = Path.Combine(webRootPath, log.ImageUrl.TrimStart('/', '\\').Replace("/", Path.DirectorySeparatorChar.ToString()));
+
+                            if (File.Exists(filePath))
+                            {
+                                try
+                                {
+                                    File.Delete(filePath);
+                                    deletedFiles++;
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning($"⚠️ Không thể xóa file {filePath}: {ex.Message}");
+                                }
+                            }
+                        }
                     }
+
+                    // 3. Xóa records trong DB
+                    dbContext.WeatherLogs.RemoveRange(oldLogs);
+                    await dbContext.SaveChangesAsync(token);
+
+                    _logger.LogInformation($"🧹 Đã dọn dẹp {oldLogs.Count} bản ghi cũ và {deletedFiles} file ảnh.");
                 }
             }
-            catch {}
+            catch (Exception ex)
+            {
+                _logger.LogError($"⚠️ Lỗi khi dọn dẹp dữ liệu cũ: {ex.Message}");
+            }
         }
     }
 }

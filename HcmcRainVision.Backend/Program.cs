@@ -7,6 +7,7 @@ using HcmcRainVision.Backend.Services.Notification;
 using HcmcRainVision.Backend.Hubs;
 using HcmcRainVision.Backend;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.ML;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,12 +25,19 @@ builder.Services.AddHttpClient();
 // 3. Đăng ký các Service (Dependency Injection)
 builder.Services.AddSingleton<ICameraCrawler, CameraCrawler>();
 builder.Services.AddSingleton<IImagePreProcessor, ImagePreProcessor>();
-// builder.Services.AddSingleton<RainPredictionService>();
 
 // 4. Đăng ký Background Worker (Chạy ngầm)
 builder.Services.AddHostedService<RainScanningWorker>();
 
-// 5. Đăng ký AI Service
+// 5. Đăng ký AI Service với PredictionEnginePool (Thread-safe)
+// Nếu có file RainAnalysisModel.zip, pool sẽ được sử dụng
+// Nếu không, service sẽ fallback sang Mock mode
+var modelPath = Path.Combine(builder.Environment.ContentRootPath, "RainAnalysisModel.zip");
+if (File.Exists(modelPath))
+{
+    builder.Services.AddPredictionEnginePool<ModelInput, ModelOutput>()
+        .FromFile(modelName: "RainModel", filePath: modelPath, watchForChanges: true);
+}
 builder.Services.AddSingleton<RainPredictionService>();
 
 // 6. Đăng ký Email Service
