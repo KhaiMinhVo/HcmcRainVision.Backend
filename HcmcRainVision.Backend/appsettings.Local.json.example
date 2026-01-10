@@ -1,0 +1,12 @@
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=localhost;Port=5432;Database=hcmc_rain_vision_dev;Username=postgres;Password=YOUR_ACTUAL_PASSWORD"
+  },
+  "EmailSettings": {
+    "SmtpServer": "smtp.gmail.com",
+    "Port": 587,
+    "SenderName": "HCMC Rain Vision Alert",
+    "SenderEmail": "your-actual-email@example.com",
+    "Password": "your-actual-app-password"
+  }
+}
