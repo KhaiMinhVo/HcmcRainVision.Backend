@@ -137,9 +137,13 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                 }
                                 else 
                                 {
-                                    // Nếu tạnh mưa (hoặc không mưa), có thể reset lại LastRainAlertSent = null 
-                                    // để lần sau mưa lại là báo ngay. Tùy logic bạn muốn.
-                                    // cam.LastRainAlertSent = null; 
+                                    // CẢI TIẾN: Nếu tạnh mưa, reset lại trạng thái để sẵn sàng báo cơn mưa mới ngay lập tức
+                                    if (cam.LastRainAlertSent != null)
+                                    {
+                                        cam.LastRainAlertSent = null; 
+                                        // Có thể gửi thêm 1 event SignalR báo "Đã tạnh mưa" nếu muốn Frontend hiển thị
+                                        _logger.LogInformation($"🌤️ Đã tạnh mưa tại {cam.Id}, reset cảnh báo.");
+                                    }
                                 }
 
                                 // --- BƯỚC 5: LƯU LOG ---
