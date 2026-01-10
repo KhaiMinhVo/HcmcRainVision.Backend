@@ -4,6 +4,7 @@ using HcmcRainVision.Backend.Services.Crawling;
 using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.AI;
 using HcmcRainVision.Backend.Services.Notification;
+using HcmcRainVision.Backend.Hubs;
 using HcmcRainVision.Backend;
 using Microsoft.EntityFrameworkCore;
 
@@ -35,13 +36,18 @@ builder.Services.AddTransient<IEmailService, EmailService>();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-// 7. Cấu hình CORS (Để React gọi được API)
+
+// 8. Đăng ký SignalR
+builder.Services.AddSignalR();
+
+// 9. Cấu hình CORS (Để React gọi được API + SignalR)
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp",
         policy => policy.WithOrigins("http://localhost:5173") // Cổng mặc định của Vite React
                         .AllowAnyMethod()
-                        .AllowAnyHeader());
+                        .AllowAnyHeader()
+                        .AllowCredentials()); // Bắt buộc cho SignalR
 });
 
 var app = builder.Build();
@@ -70,5 +76,8 @@ app.UseStaticFiles();
 
 app.UseAuthorization();
 app.MapControllers();
+
+// Đăng ký SignalR Hub endpoint
+app.MapHub<RainHub>("/rainHub");
 
 app.Run();
