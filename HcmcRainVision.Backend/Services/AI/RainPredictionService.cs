@@ -10,6 +10,9 @@ namespace HcmcRainVision.Backend.Services.AI
         private ITransformer? _trainedModel;
         private PredictionEngine<ModelInput, ModelOutput>? _predictionEngine;
         private readonly ILogger<RainPredictionService> _logger;
+        
+        // Thread safety: PredictionEngine is NOT thread-safe, must lock access
+        private readonly object _predictionLock = new object();
 
         public RainPredictionService(IWebHostEnvironment env, ILogger<RainPredictionService> logger)
         {
@@ -62,35 +65,39 @@ namespace HcmcRainVision.Backend.Services.AI
             }
 
             // --- TRƯỜNG HỢP 2: ĐÃ CÓ MODEL (Dự đoán thật) ---
-            try
+            // BẮT BUỘC PHẢI LOCK vì PredictionEngine không thread-safe
+            lock (_predictionLock)
             {
-                // Tạo input data
-                var input = new ModelInput { Image = imageBytes };
-
-                // Thực hiện dự đoán
-                var result = _predictionEngine.Predict(input);
-
-                // Giả sử nhãn của bạn là "Rain" và "NoRain"
-                // Model trả về Score là mảng. Ví dụ: [0.1, 0.9] tương ứng [NoRain, Rain]
-                // Logic này phụ thuộc vào lúc bạn train model gán nhãn nào trước.
-                // Ở đây tôi giả định output đơn giản:
-                
-                bool isRaining = result.Prediction?.Equals("Rain", StringComparison.OrdinalIgnoreCase) ?? false;
-                
-                // Lấy độ tin cậy cao nhất trong mảng Score
-                float maxScore = result.Score?.Max() ?? 0f; 
-
-                return new RainPredictionResult
+                try
                 {
-                    IsRaining = isRaining,
-                    Confidence = maxScore,
-                    Message = "AI Prediction"
-                };
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Lỗi khi dự đoán: {ex.Message}");
-                return new RainPredictionResult { IsRaining = false, Confidence = 0, Message = "Error" };
+                    // Tạo input data
+                    var input = new ModelInput { Image = imageBytes };
+
+                    // Thực hiện dự đoán (chỉ 1 luồng được chạy tại 1 thời điểm)
+                    var result = _predictionEngine.Predict(input);
+
+                    // Giả sử nhãn của bạn là "Rain" và "NoRain"
+                    // Model trả về Score là mảng. Ví dụ: [0.1, 0.9] tương ứng [NoRain, Rain]
+                    // Logic này phụ thuộc vào lúc bạn train model gán nhãn nào trước.
+                    // Ở đây tôi giả định output đơn giản:
+                    
+                    bool isRaining = result.Prediction?.Equals("Rain", StringComparison.OrdinalIgnoreCase) ?? false;
+                    
+                    // Lấy độ tin cậy cao nhất trong mảng Score
+                    float maxScore = result.Score?.Max() ?? 0f; 
+
+                    return new RainPredictionResult
+                    {
+                        IsRaining = isRaining,
+                        Confidence = maxScore,
+                        Message = "AI Prediction"
+                    };
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError($"Lỗi khi dự đoán: {ex.Message}");
+                    return new RainPredictionResult { IsRaining = false, Confidence = 0, Message = "Error" };
+                }
             }
         }
     }
