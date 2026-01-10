@@ -30,6 +30,38 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             _hubContext = hubContext;
         }
 
+        /// <summary>
+        /// Dọn dẹp ảnh cũ hơn 7 ngày để tránh đầy ổ cứng
+        /// </summary>
+        private void CleanupOldImages(string saveFolder, int retentionDays = 7)
+        {
+            try
+            {
+                var cutoffDate = DateTime.Now.AddDays(-retentionDays);
+                var files = Directory.GetFiles(saveFolder, "*.jpg");
+                int deletedCount = 0;
+
+                foreach (var file in files)
+                {
+                    var fileInfo = new FileInfo(file);
+                    if (fileInfo.CreationTime < cutoffDate)
+                    {
+                        File.Delete(file);
+                        deletedCount++;
+                    }
+                }
+
+                if (deletedCount > 0)
+                {
+                    _logger.LogInformation($"🗑️ Đã xóa {deletedCount} ảnh cũ hơn {retentionDays} ngày");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"⚠️ Lỗi khi dọn dẹp ảnh cũ: {ex.Message}");
+            }
+        }
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             // Tạo thư mục lưu ảnh nếu chưa có: wwwroot/images/rain_logs
@@ -41,12 +73,18 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                 Directory.CreateDirectory(saveFolder);
             }
 
+            // Dọn dẹp ảnh cũ ngay khi khởi động
+            CleanupOldImages(saveFolder, retentionDays: 7);
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
 
                 try
                 {
+                    // Dọn dẹp ảnh cũ mỗi lần chạy (mỗi 5 phút)
+                    CleanupOldImages(saveFolder, retentionDays: 7);
+
                     // 1. Lấy danh sách Camera trước (Dùng scope tạm để lấy list)
                     List<Camera> cameras;
                     using (var scope = _serviceProvider.CreateScope())
@@ -70,7 +108,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                             CancellationToken = stoppingToken 
                         };
 
-                        await Parallel.ForEachAsync(cameras, parallelOptions, async (cam, token) =>
+                        await Parallel.ForEachAsync(cameras, parallelOptions, async (camOuter, token) =>
                         {
                             try
                             {
@@ -81,6 +119,14 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                 var aiService = scope.ServiceProvider.GetRequiredService<RainPredictionService>();
                                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                                 var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+
+                                // TRUY VẤN LẠI CAMERA TRONG SCOPE MỚI ĐỂ ĐƯỢC TRACKING BỞI EF CORE
+                                var cam = await dbContext.Cameras.FindAsync(new object[] { camOuter.Id }, token);
+                                if (cam == null)
+                                {
+                                    _logger.LogWarning($"⚠️ Không tìm thấy camera {camOuter.Id} trong scope mới");
+                                    return;
+                                }
 
                                 // --- BƯỚC 1: CRAWL ---
                                 byte[]? rawBytes = await crawler.FetchImageAsync(cam.SourceUrl);
@@ -101,40 +147,67 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                 // --- BƯỚC 3: AI DETECT ---
                                 var prediction = aiService.Predict(processedBytes);
 
-                                // --- BƯỚC 4: LOGIC LƯU ẢNH (Chỉ lưu khi có mưa để tiết kiệm ổ cứng) ---
+                                // --- BƯỚC 4: LOGIC LƯU ẢNH (Tiết kiệm ổ cứng) ---
                                 string? savedImageUrl = null;
+                                bool shouldAlert = false; // Khai báo ở scope rộng hơn để dùng lại
 
                                 if (prediction.IsRaining)
                                 {
-                                    // Tạo tên file unique: CAM_ID_TimeStamp.jpg
-                                    string fileName = $"{cam.Id}_{DateTime.Now.Ticks}.jpg";
-                                    string fullPath = Path.Combine(saveFolder, fileName);
+                                    // Kiểm tra xem có cần gửi alert không (mỗi 3 tiếng)
+                                    shouldAlert = cam.LastRainAlertSent == null || 
+                                                  (DateTime.UtcNow - cam.LastRainAlertSent.Value).TotalMinutes > 180;
 
-                                    // Lưu file đã xử lý (processedBytes) để nhẹ hơn
-                                    await File.WriteAllBytesAsync(fullPath, processedBytes, token);
-
-                                    // Đường dẫn để Frontend truy cập
-                                    savedImageUrl = $"/images/rain_logs/{fileName}";
-
-                                    // --- GỬ8I THÔNG BÁO REAL-TIME QUA SIGNALR ---
-                                    try
+                                    // CHỈ LƯU ẢNH KHI CẦN GỬI ALERT (tiết kiệm ~90% dung lượng)
+                                    // Nếu không cần alert, chỉ lưu log vào DB thôi
+                                    if (shouldAlert)
                                     {
-                                        await _hubContext.Clients.All.SendAsync("ReceiveRainAlert", new
-                                        {
-                                            CameraId = cam.Id,
-                                            CameraName = cam.Name,
-                                            Latitude = cam.Latitude,
-                                            Longitude = cam.Longitude,
-                                            ImageUrl = savedImageUrl,
-                                            Confidence = prediction.Confidence,
-                                            Time = DateTime.Now
-                                        }, token);
+                                        // Tạo tên file unique: CAM_ID_TimeStamp.jpg
+                                        string fileName = $"{cam.Id}_{DateTime.Now.Ticks}.jpg";
+                                        string fullPath = Path.Combine(saveFolder, fileName);
 
-                                        _logger.LogInformation($"📡 Đã gửi SignalR alert cho camera {cam.Name}");
+                                        // Lưu file đã xử lý (processedBytes) để nhẹ hơn
+                                        await File.WriteAllBytesAsync(fullPath, processedBytes, token);
+
+                                        // Đường dẫn để Frontend truy cập
+                                        savedImageUrl = $"/images/rain_logs/{fileName}";
+                                        _logger.LogInformation($"💾 Đã lưu ảnh: {fileName}");
                                     }
-                                    catch (Exception signalREx)
+                                    else
                                     {
-                                        _logger.LogError($"⚠️ Lỗi gửi SignalR: {signalREx.Message}");
+                                        _logger.LogInformation($"⏭️ Bỏ qua lưu ảnh cho {cam.Name} (đã có ảnh trong 3 tiếng qua)");
+                                    }
+
+                                    // --- LOGIC CHỐNG SPAM: Chỉ gửi thông báo mỗi 3 tiếng ---
+                                    if (shouldAlert)
+                                    {
+                                        // --- GỬI THÔNG BÁO REAL-TIME QUA SIGNALR ---
+                                        try
+                                        {
+                                            await _hubContext.Clients.All.SendAsync("ReceiveRainAlert", new
+                                            {
+                                                CameraId = cam.Id,
+                                                CameraName = cam.Name,
+                                                Latitude = cam.Latitude,
+                                                Longitude = cam.Longitude,
+                                                ImageUrl = savedImageUrl,
+                                                Confidence = prediction.Confidence,
+                                                Time = DateTime.Now
+                                            }, token);
+
+                                            _logger.LogInformation($"📡 Đã gửi SignalR alert cho camera {cam.Name}");
+                                        }
+                                        catch (Exception signalREx)
+                                        {
+                                            _logger.LogError($"⚠️ Lỗi gửi SignalR: {signalREx.Message}");
+                                        }
+
+                                        // Cập nhật thời gian gửi cảnh báo
+                                        // (EF Core tự động tracking thay đổi vì 'cam' được query từ FindAsync)
+                                        cam.LastRainAlertSent = DateTime.UtcNow;
+                                    }
+                                    else
+                                    {
+                                        _logger.LogInformation($"⏳ Bỏ qua gửi alert cho {cam.Name} (cooldown: {180 - (DateTime.UtcNow - cam.LastRainAlertSent.Value).TotalMinutes:0} phút còn lại)");
                                     }
                                 }
 
@@ -154,8 +227,8 @@ namespace HcmcRainVision.Backend.BackgroundJobs
 
                                 _logger.LogInformation($"✅ [{cam.Id}] {cam.Name} | Mưa: {prediction.IsRaining} ({prediction.Confidence * 100:0}%) | Img: {savedImageUrl}");
 
-                                // --- BƯỚC 6: GỬI EMAIL CẢNH BÁO (Nếu có mưa và độ tin cậy cao) ---
-                                if (prediction.IsRaining && prediction.Confidence > 0.7)
+                                // --- BƯỚC 6: GỬI EMAIL CẢNH BÁO (Chỉ gửi khi có mưa, độ tin cậy cao VÀ shouldAlert = true) ---
+                                if (prediction.IsRaining && prediction.Confidence > 0.7 && shouldAlert)
                                 {
                                     string subject = $"⚠️ CẢNH BÁO MƯA: Phát hiện tại Camera {cam.Name}";
                                     string body = $@"
@@ -169,11 +242,13 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                     ";
 
                                     await emailService.SendEmailAsync("khaivpmse184623@fpt.edu.vn", subject, body);
+                                    _logger.LogInformation($"📧 Đã gửi email cảnh báo cho camera {cam.Name}");
                                 }
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError($"❌ Lỗi xử lý camera {cam.Id} ({cam.Name}): {ex.Message}");
+                                // Dùng camOuter vì cam có thể null nếu lỗi xảy ra trước khi FindAsync hoàn thành
+                                _logger.LogError($"❌ Lỗi xử lý camera {camOuter.Id} ({camOuter.Name}): {ex.Message}");
                             }
                         });
 

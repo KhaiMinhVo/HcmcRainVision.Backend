@@ -24,6 +24,13 @@ namespace HcmcRainVision.Backend.Controllers
     {
         private readonly AppDbContext _context;
 
+        // Hằng số: Bán kính cảnh báo mưa (đơn vị: độ trong WGS84)
+        // 0.009 độ ≈ 1km tại TP.HCM (vĩ độ ~10.8°)
+        // LƯU Ý: Trong hệ tọa độ WGS84 (Lat/Long), Buffer tạo ra hình ellipse chứ không phải hình tròn đều
+        // do kinh độ co lại khi lên cao vĩ độ. Với TP.HCM (gần xích đạo), sai số nhỏ và chấp nhận được.
+        // Để chuẩn xác hơn, cần dùng hệ tọa độ phẳng (VN-2000/UTM) nhưng sẽ phức tạp hơn.
+        private const double RAIN_ALERT_RADIUS_DEGREES = 0.009; // ~1km tại HCMC
+
         public WeatherController(AppDbContext context)
         {
             _context = context;
@@ -106,14 +113,16 @@ namespace HcmcRainVision.Backend.Controllers
 
             var warnings = new List<object>();
 
-            // 3. Kiểm tra va chạm không gian
+            // 3. Kiểm tra va chạm không gian (Spatial Intersection)
             foreach (var log in rainingLogs)
             {
                 if (log.Location == null) continue;
 
-                // Tạo vùng đệm 1km quanh điểm mưa (0.009 độ ~ 1km)
-                var rainZone = log.Location.Buffer(0.009); 
+                // Tạo vùng đệm (buffer) quanh điểm mưa
+                // Sử dụng RAIN_ALERT_RADIUS_DEGREES (~1km tại TP.HCM)
+                var rainZone = log.Location.Buffer(RAIN_ALERT_RADIUS_DEGREES); 
 
+                // Kiểm tra xem lộ trình có đi qua vùng mưa không
                 if (routeLine.Intersects(rainZone))
                 {
                     warnings.Add(new { 

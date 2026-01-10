@@ -13,5 +13,7 @@ namespace HcmcRainVision.Backend.Models.Entities
 
         public double Latitude { get; set; } // Vĩ độ
         public double Longitude { get; set; } // Kinh độ
+
+        public DateTime? LastRainAlertSent { get; set; } // Thời gian gửi cảnh báo mưa lần cuối
     }
 }
