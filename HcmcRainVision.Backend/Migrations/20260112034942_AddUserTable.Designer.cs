@@ -3,6 +3,7 @@ using System;
 using HcmcRainVision.Backend.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NetTopologySuite.Geometries;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HcmcRainVision.Backend.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260112034942_AddUserTable")]
+    partial class AddUserTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -51,33 +54,6 @@ namespace HcmcRainVision.Backend.Migrations
                     b.ToTable("Cameras");
                 });
 
-            modelBuilder.Entity("HcmcRainVision.Backend.Models.Entities.FavoriteCamera", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("AddedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CameraId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CameraId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("FavoriteCameras");
-                });
-
             modelBuilder.Entity("HcmcRainVision.Backend.Models.Entities.User", b =>
                 {
                     b.Property<int>("Id")
@@ -86,9 +62,6 @@ namespace HcmcRainVision.Backend.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<string>("AvatarUrl")
-                        .HasColumnType("text");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -96,24 +69,9 @@ namespace HcmcRainVision.Backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("FullName")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<string>("PhoneNumber")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ResetToken")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("ResetTokenExpiry")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Role")
                         .IsRequired()
@@ -155,12 +113,7 @@ namespace HcmcRainVision.Backend.Migrations
                     b.Property<bool>("UserClaimIsRaining")
                         .HasColumnType("boolean");
 
-                    b.Property<int?>("UserId")
-                        .HasColumnType("integer");
-
                     b.HasKey("Id");
-
-                    b.HasIndex("UserId");
 
                     b.ToTable("UserReports");
                 });
@@ -194,39 +147,6 @@ namespace HcmcRainVision.Backend.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("WeatherLogs");
-                });
-
-            modelBuilder.Entity("HcmcRainVision.Backend.Models.Entities.FavoriteCamera", b =>
-                {
-                    b.HasOne("HcmcRainVision.Backend.Models.Entities.Camera", "Camera")
-                        .WithMany()
-                        .HasForeignKey("CameraId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("HcmcRainVision.Backend.Models.Entities.User", "User")
-                        .WithMany("FavoriteCameras")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Camera");
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("HcmcRainVision.Backend.Models.Entities.UserReport", b =>
-                {
-                    b.HasOne("HcmcRainVision.Backend.Models.Entities.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId");
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("HcmcRainVision.Backend.Models.Entities.User", b =>
-                {
-                    b.Navigation("FavoriteCameras");
                 });
 #pragma warning restore 612, 618
         }

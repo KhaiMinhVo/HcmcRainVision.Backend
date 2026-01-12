@@ -8,6 +8,9 @@ using HcmcRainVision.Backend.Hubs;
 using HcmcRainVision.Backend;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.ML;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,7 +46,21 @@ builder.Services.AddSingleton<RainPredictionService>();
 // 6. Đăng ký Email Service
 builder.Services.AddTransient<IEmailService, EmailService>();
 
-// 7. Đăng ký Controllers
+// 7. Đăng ký JWT Authentication
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8
+                .GetBytes(builder.Configuration.GetSection("JwtSettings:Key").Value!)),
+            ValidateIssuer = false,
+            ValidateAudience = false
+        };
+    });
+
+// 8. Đăng ký Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -85,7 +102,10 @@ app.UseCors("AllowReactApp");
 // Cho phép truy cập file trong thư mục wwwroot
 app.UseStaticFiles();
 
-app.UseAuthorization();
+// Thêm Authentication và Authorization middleware (theo đúng thứ tự)
+app.UseAuthentication(); // Xác thực: Bạn là ai?
+app.UseAuthorization();  // Phân quyền: Bạn được làm gì?
+
 app.MapControllers();
 
 // Đăng ký SignalR Hub endpoint

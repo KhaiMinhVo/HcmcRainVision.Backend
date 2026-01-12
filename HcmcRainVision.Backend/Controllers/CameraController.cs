@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using HcmcRainVision.Backend.Data;
@@ -16,14 +17,15 @@ namespace HcmcRainVision.Backend.Controllers
             _context = context;
         }
 
-        // 1. Lấy danh sách camera
+        // 1. Lấy danh sách camera (Public - Ai cũng xem được)
         [HttpGet]
         public async Task<IActionResult> GetCameras()
         {
             return Ok(await _context.Cameras.ToListAsync());
         }
 
-        // 2. Thêm camera mới
+        // 2. Thêm camera mới (Chỉ Admin)
+        [Authorize(Roles = "Admin")]
         [HttpPost]
         public async Task<IActionResult> AddCamera([FromBody] Camera camera)
         {
@@ -37,7 +39,8 @@ namespace HcmcRainVision.Backend.Controllers
             return Ok(camera);
         }
 
-        // 3. Xóa camera
+        // 3. Xóa camera (Chỉ Admin)
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteCamera(string id)
         {
@@ -49,7 +52,8 @@ namespace HcmcRainVision.Backend.Controllers
             return Ok(new { message = "Đã xóa camera thành công" });
         }
         
-        // 4. Sửa thông tin camera (VD: đổi URL stream)
+        // 4. Sửa thông tin camera (Chỉ Admin)
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateCamera(string id, [FromBody] Camera updatedCam)
         {
