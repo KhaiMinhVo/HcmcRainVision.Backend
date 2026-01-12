@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace HcmcRainVision.Backend.Models.Entities
 {
@@ -10,5 +11,11 @@ namespace HcmcRainVision.Backend.Models.Entities
         public bool UserClaimIsRaining { get; set; } // Người dùng bảo: Có mưa (True) / Không mưa (False)
         public DateTime Timestamp { get; set; }
         public string? Note { get; set; } // Ghi chú thêm
+
+        // Liên kết với User (Nullable vì có thể mở cho khách vãng lai nếu muốn, nhưng ở đây ta bắt buộc login)
+        public int? UserId { get; set; }
+        
+        [ForeignKey("UserId")]
+        public User? User { get; set; }
     }
 }

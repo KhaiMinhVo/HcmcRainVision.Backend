@@ -1,57 +1,49 @@
 using Microsoft.ML;
+using Microsoft.Extensions.ML;
 using System.IO;
 
 namespace HcmcRainVision.Backend.Services.AI
 {
     public class RainPredictionService
     {
-        private readonly string _modelPath;
-        private readonly MLContext _mlContext;
-        private ITransformer? _trainedModel;
-        private PredictionEngine<ModelInput, ModelOutput>? _predictionEngine;
+        private readonly PredictionEnginePool<ModelInput, ModelOutput>? _predictionEnginePool;
         private readonly ILogger<RainPredictionService> _logger;
-        
-        // Thread safety: PredictionEngine is NOT thread-safe, must lock access
-        private readonly object _predictionLock = new object();
+        private readonly bool _isMockMode;
 
-        public RainPredictionService(IWebHostEnvironment env, ILogger<RainPredictionService> logger)
+        public RainPredictionService(
+            ILogger<RainPredictionService> logger,
+            IWebHostEnvironment env)
         {
             _logger = logger;
-            _mlContext = new MLContext();
             
-            // Đường dẫn file model (bạn sẽ ném file .zip vào thư mục gốc của dự án)
-            _modelPath = Path.Combine(env.ContentRootPath, "RainAnalysisModel.zip");
+            // Kiểm tra xem có file model không
+            var modelPath = Path.Combine(env.ContentRootPath, "RainAnalysisModel.zip");
+            _isMockMode = !File.Exists(modelPath);
 
-            LoadModel();
-        }
-
-        private void LoadModel()
-        {
-            if (File.Exists(_modelPath))
-            {
-                try 
-                {
-                    // Load model từ file .zip
-                    _trainedModel = _mlContext.Model.Load(_modelPath, out var modelInputSchema);
-                    _predictionEngine = _mlContext.Model.CreatePredictionEngine<ModelInput, ModelOutput>(_trainedModel);
-                    _logger.LogInformation("✅ Đã load Model AI thành công!");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"❌ Lỗi load model: {ex.Message}. Chuyển sang chế độ giả lập.");
-                    _trainedModel = null;
-                }
-            }
-            else
+            if (_isMockMode)
             {
                 _logger.LogWarning("⚠️ Không tìm thấy file RainAnalysisModel.zip. Đang chạy chế độ GIẢ LẬP (Mock Mode).");
             }
+            else
+            {
+                _logger.LogInformation("✅ Phát hiện Model AI, sẵn sàng sử dụng PredictionEnginePool.");
+            }
+        }
+
+        // Constructor overload để inject PredictionEnginePool (khi có model)
+        public RainPredictionService(
+            PredictionEnginePool<ModelInput, ModelOutput> predictionEnginePool,
+            ILogger<RainPredictionService> logger)
+        {
+            _predictionEnginePool = predictionEnginePool;
+            _logger = logger;
+            _isMockMode = false;
         }
 
         public RainPredictionResult Predict(byte[] imageBytes)
         {
             // --- TRƯỜNG HỢP 1: CHƯA CÓ MODEL (Giả lập) ---
-            if (_trainedModel == null || _predictionEngine == null)
+            if (_isMockMode || _predictionEnginePool == null)
             {
                 // Random kết quả để test giao diện
                 var random = new Random();
@@ -64,40 +56,31 @@ namespace HcmcRainVision.Backend.Services.AI
                 };
             }
 
-            // --- TRƯỜNG HỢP 2: ĐÃ CÓ MODEL (Dự đoán thật) ---
-            // BẮT BUỘC PHẢI LOCK vì PredictionEngine không thread-safe
-            lock (_predictionLock)
+            // --- TRƯỜNG HỢP 2: ĐÃ CÓ MODEL (Dự đoán thật với PredictionEnginePool - Thread-safe) ---
+            try
             {
-                try
+                var input = new ModelInput { Image = imageBytes };
+                
+                // Không cần lock, Pool tự xử lý thread-safe
+                var result = _predictionEnginePool.Predict(input);
+
+                // Giả sử nhãn của bạn là "Rain" và "NoRain"
+                bool isRaining = result.Prediction?.Equals("Rain", StringComparison.OrdinalIgnoreCase) ?? false;
+                
+                // Lấy độ tin cậy cao nhất trong mảng Score
+                float maxScore = result.Score?.Max() ?? 0f; 
+
+                return new RainPredictionResult
                 {
-                    // Tạo input data
-                    var input = new ModelInput { Image = imageBytes };
-
-                    // Thực hiện dự đoán (chỉ 1 luồng được chạy tại 1 thời điểm)
-                    var result = _predictionEngine.Predict(input);
-
-                    // Giả sử nhãn của bạn là "Rain" và "NoRain"
-                    // Model trả về Score là mảng. Ví dụ: [0.1, 0.9] tương ứng [NoRain, Rain]
-                    // Logic này phụ thuộc vào lúc bạn train model gán nhãn nào trước.
-                    // Ở đây tôi giả định output đơn giản:
-                    
-                    bool isRaining = result.Prediction?.Equals("Rain", StringComparison.OrdinalIgnoreCase) ?? false;
-                    
-                    // Lấy độ tin cậy cao nhất trong mảng Score
-                    float maxScore = result.Score?.Max() ?? 0f; 
-
-                    return new RainPredictionResult
-                    {
-                        IsRaining = isRaining,
-                        Confidence = maxScore,
-                        Message = "AI Prediction"
-                    };
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"Lỗi khi dự đoán: {ex.Message}");
-                    return new RainPredictionResult { IsRaining = false, Confidence = 0, Message = "Error" };
-                }
+                    IsRaining = isRaining,
+                    Confidence = maxScore,
+                    Message = "AI Prediction (Pool)"
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Lỗi khi dự đoán: {ex.Message}");
+                return new RainPredictionResult { IsRaining = false, Confidence = 0, Message = "Error" };
             }
         }
     }

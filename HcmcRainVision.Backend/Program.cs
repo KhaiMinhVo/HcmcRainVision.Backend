@@ -7,6 +7,10 @@ using HcmcRainVision.Backend.Services.Notification;
 using HcmcRainVision.Backend.Hubs;
 using HcmcRainVision.Backend;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.ML;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,18 +28,39 @@ builder.Services.AddHttpClient();
 // 3. Đăng ký các Service (Dependency Injection)
 builder.Services.AddSingleton<ICameraCrawler, CameraCrawler>();
 builder.Services.AddSingleton<IImagePreProcessor, ImagePreProcessor>();
-// builder.Services.AddSingleton<RainPredictionService>();
 
 // 4. Đăng ký Background Worker (Chạy ngầm)
 builder.Services.AddHostedService<RainScanningWorker>();
 
-// 5. Đăng ký AI Service
+// 5. Đăng ký AI Service với PredictionEnginePool (Thread-safe)
+// Nếu có file RainAnalysisModel.zip, pool sẽ được sử dụng
+// Nếu không, service sẽ fallback sang Mock mode
+var modelPath = Path.Combine(builder.Environment.ContentRootPath, "RainAnalysisModel.zip");
+if (File.Exists(modelPath))
+{
+    builder.Services.AddPredictionEnginePool<ModelInput, ModelOutput>()
+        .FromFile(modelName: "RainModel", filePath: modelPath, watchForChanges: true);
+}
 builder.Services.AddSingleton<RainPredictionService>();
 
 // 6. Đăng ký Email Service
 builder.Services.AddTransient<IEmailService, EmailService>();
 
-// 7. Đăng ký Controllers
+// 7. Đăng ký JWT Authentication
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8
+                .GetBytes(builder.Configuration.GetSection("JwtSettings:Key").Value!)),
+            ValidateIssuer = false,
+            ValidateAudience = false
+        };
+    });
+
+// 8. Đăng ký Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -77,7 +102,10 @@ app.UseCors("AllowReactApp");
 // Cho phép truy cập file trong thư mục wwwroot
 app.UseStaticFiles();
 
-app.UseAuthorization();
+// Thêm Authentication và Authorization middleware (theo đúng thứ tự)
+app.UseAuthentication(); // Xác thực: Bạn là ai?
+app.UseAuthorization();  // Phân quyền: Bạn được làm gì?
+
 app.MapControllers();
 
 // Đăng ký SignalR Hub endpoint

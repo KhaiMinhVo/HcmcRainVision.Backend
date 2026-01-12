@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NetTopologySuite.Geometries;
+using System.Security.Claims;
 using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.Entities;
 
@@ -74,22 +76,28 @@ namespace HcmcRainVision.Backend.Controllers
         }
 
         // API: POST api/weather/report
-        // Cho phép người dùng báo cáo khi AI nhận diện sai
+        // Cho phép người dùng báo cáo khi AI nhận diện sai (Yêu cầu đăng nhập)
+        [Authorize]
         [HttpPost("report")]
         public async Task<IActionResult> ReportIncorrectPrediction([FromBody] ReportDto input)
         {
+            // Lấy thông tin người dùng từ Token đang đăng nhập
+            var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            int? userId = userIdStr != null ? int.Parse(userIdStr) : null;
+
             var report = new UserReport 
             {
                 CameraId = input.CameraId,
                 UserClaimIsRaining = input.IsRaining,
                 Note = input.Note,
+                UserId = userId, // Lưu ID người dùng chuẩn chỉ
                 Timestamp = DateTime.UtcNow
             };
 
             _context.UserReports.Add(report);
             await _context.SaveChangesAsync();
             
-            return Ok(new { message = "Cảm ơn đóng góp của bạn! Hệ thống sẽ xem xét lại." });
+            return Ok(new { message = "Cảm ơn đóng góp của bạn!" });
         }
 
         // API: POST api/weather/check-route
