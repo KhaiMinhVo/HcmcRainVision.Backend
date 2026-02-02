@@ -91,11 +91,9 @@ if (app.Environment.IsDevelopment())
 }
 
 // Pipeline
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+// Luôn hiện Swagger để chấm bài (cả Production)
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseCors("AllowReactApp");
 
