@@ -58,7 +58,8 @@ namespace HcmcRainVision.Backend.Services.Notification
             }
             catch (Exception ex)
             {
-                _logger.LogError($"❌ Lỗi gửi email: {ex.Message}");
+                // Ghi log đầy đủ với stack trace để dễ debug (ví dụ: sai password, lỗi SMTP)
+                _logger.LogError(ex, $"❌ Lỗi gửi email đến {recipientEmail}: {ex.Message}");
             }
         }
     }

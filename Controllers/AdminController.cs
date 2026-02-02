@@ -56,7 +56,7 @@ namespace HcmcRainVision.Backend.Controllers
 
             foreach (var report in reports)
             {
-                // Tìm log của AI trong khoảng +- 5 phút so với lúc user báo cáo
+                // Tìm log của AI trong khoảng +- 5 phút so với lúc user báo cáo (dùng UTC)
                 var relevantLog = await _context.WeatherLogs
                     .Where(w => w.CameraId == report.CameraId 
                                 && w.Timestamp >= report.Timestamp.AddMinutes(-5)

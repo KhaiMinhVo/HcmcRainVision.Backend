@@ -106,7 +106,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                 if (shouldSaveImage)
                                 {
                                     // Lưu ảnh cho training/debugging
-                                    string fileName = $"{cam.Id}_{DateTime.Now.Ticks}.jpg";
+                                    string fileName = $"{cam.Id}_{DateTime.UtcNow.Ticks}.jpg";
                                     string fullPath = Path.Combine(saveFolder, fileName);
                                     await File.WriteAllBytesAsync(fullPath, processedBytes, token);
                                     savedImageUrl = $"/images/rain_logs/{fileName}";
@@ -122,7 +122,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                 {
                                     if (shouldAlert)
                                     {
-                                        // 1. Gửi SignalR
+                                        // 1. Gửi SignalR (đã có await)
                                         await _hubContext.Clients.All.SendAsync("ReceiveRainAlert", new
                                         {
                                             CameraId = cam.Id,
@@ -131,7 +131,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                             Longitude = cam.Longitude,
                                             ImageUrl = savedImageUrl,
                                             Confidence = prediction.Confidence,
-                                            Time = DateTime.Now
+                                            Time = DateTime.UtcNow
                                         }, token);
 
                                         // 2. Gửi Email (chỉ gửi khi tin cậy cao > 70%)
@@ -211,11 +211,14 @@ namespace HcmcRainVision.Backend.BackgroundJobs
 
                 if (oldLogs.Count > 0)
                 {
-                    // 2. Xóa file trên đĩa
+                    // 2. Xóa file trên đĩa (Tối ưu: xử lý theo batch để tránh treo Worker)
                     string webRootPath = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
                     int deletedFiles = 0;
+                    
+                    // Chỉ xử lý 100 bản ghi mỗi lần để tránh quá tải
+                    var logsToDelete = oldLogs.Take(100).ToList();
 
-                    foreach (var log in oldLogs)
+                    foreach (var log in logsToDelete)
                     {
                         if (!string.IsNullOrEmpty(log.ImageUrl))
                         {
@@ -227,7 +230,8 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                             {
                                 try
                                 {
-                                    File.Delete(filePath);
+                                    // Chạy xóa file ở luồng phụ để không block Worker
+                                    await Task.Run(() => File.Delete(filePath), token);
                                     deletedFiles++;
                                 }
                                 catch (Exception ex)
@@ -239,10 +243,10 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     }
 
                     // 3. Xóa records trong DB
-                    dbContext.WeatherLogs.RemoveRange(oldLogs);
+                    dbContext.WeatherLogs.RemoveRange(logsToDelete);
                     await dbContext.SaveChangesAsync(token);
 
-                    _logger.LogInformation($"🧹 Đã dọn dẹp {oldLogs.Count} bản ghi cũ và {deletedFiles} file ảnh.");
+                    _logger.LogInformation($"🧹 Đã dọn dẹp {logsToDelete.Count} bản ghi cũ và {deletedFiles} file ảnh.");
                 }
             }
             catch (Exception ex)
