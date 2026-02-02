@@ -110,9 +110,25 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                 {
                                     // Lưu ảnh cho training/debugging
                                     string fileName = $"{cam.Id}_{DateTime.UtcNow.Ticks}.jpg";
-                                    string fullPath = Path.Combine(saveFolder, fileName);
-                                    await File.WriteAllBytesAsync(fullPath, processedBytes, token);
-                                    savedImageUrl = $"/images/rain_logs/{fileName}";
+                                    
+                                    // 1. Thử upload lên Cloudinary trước
+                                    var cloudStorage = scope.ServiceProvider.GetRequiredService<ICloudStorageService>();
+                                    var cloudinaryUrl = await cloudStorage.UploadImageAsync(processedBytes, fileName);
+                                    
+                                    if (!string.IsNullOrEmpty(cloudinaryUrl))
+                                    {
+                                        // Thành công → Dùng URL từ Cloudinary
+                                        savedImageUrl = cloudinaryUrl;
+                                        _logger.LogInformation($"☁️ Đã upload lên Cloudinary: {cloudinaryUrl}");
+                                    }
+                                    else
+                                    {
+                                        // Fallback → Lưu local nếu Cloudinary không khả dụng
+                                        string fullPath = Path.Combine(saveFolder, fileName);
+                                        await File.WriteAllBytesAsync(fullPath, processedBytes, token);
+                                        savedImageUrl = $"/images/rain_logs/{fileName}";
+                                        _logger.LogWarning($"⚠️ Cloudinary không khả dụng, lưu local: {savedImageUrl}");
+                                    }
 
                                     // Log lý do lưu ảnh
                                     if (isUnsure)
