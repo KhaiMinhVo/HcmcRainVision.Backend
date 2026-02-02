@@ -14,18 +14,75 @@ public static class TestDataSeeder
             Console.WriteLine("📷 Đang thêm dữ liệu Camera mẫu...");
             var cameras = new[]
             {
+                // Camera từ hệ thống giao thông TP.HCM
+                new Camera 
+                { 
+                    Id = "CAM_Q1_001", 
+                    Name = "Ngã tư Lê Duẩn - Pasteur (Q1)", 
+                    SourceUrl = "TEST_MODE", // Thay bằng URL thật khi có
+                    Latitude = 10.7797, 
+                    Longitude = 106.6990 
+                },
+                new Camera 
+                { 
+                    Id = "CAM_Q1_002", 
+                    Name = "Vòng xoay Quách Thị Trang (Q1)", 
+                    SourceUrl = "TEST_MODE",
+                    Latitude = 10.7712, 
+                    Longitude = 106.6983 
+                },
+                new Camera 
+                { 
+                    Id = "CAM_Q3_001", 
+                    Name = "Ngã tư CMT8 - Cách Mạng Tháng 8 (Q3)", 
+                    SourceUrl = "TEST_MODE",
+                    Latitude = 10.7785, 
+                    Longitude = 106.6897 
+                },
+                new Camera 
+                { 
+                    Id = "CAM_Q5_001", 
+                    Name = "Chợ An Đông (Q5)", 
+                    SourceUrl = "TEST_MODE",
+                    Latitude = 10.7550, 
+                    Longitude = 106.6520 
+                },
+                new Camera 
+                { 
+                    Id = "CAM_Q7_001", 
+                    Name = "Phú Mỹ Hưng (Q7)", 
+                    SourceUrl = "TEST_MODE",
+                    Latitude = 10.7290, 
+                    Longitude = 106.7200 
+                },
+                new Camera 
+                { 
+                    Id = "CAM_BINHTAN_001", 
+                    Name = "Cầu Bình Triệu (Bình Tân)", 
+                    SourceUrl = "TEST_MODE",
+                    Latitude = 10.8000, 
+                    Longitude = 106.6300 
+                },
+                new Camera 
+                { 
+                    Id = "CAM_TAN_BINH_001", 
+                    Name = "Sân bay Tân Sơn Nhất (Tân Bình)", 
+                    SourceUrl = "TEST_MODE",
+                    Latitude = 10.8185, 
+                    Longitude = 106.6595 
+                },
                 new Camera 
                 { 
                     Id = "CAM_TEST_01", 
-                    Name = "Camera Test Mode", 
-                    SourceUrl = "TEST_MODE", // Dùng chế độ giả lập
+                    Name = "Camera Test Mode (Bến Thành)", 
+                    SourceUrl = "TEST_MODE", 
                     Latitude = 10.762622, 
                     Longitude = 106.660172 
                 }
-                // Bạn có thể thêm link camera thật vào đây nếu có
             };
             await context.Cameras.AddRangeAsync(cameras);
             await context.SaveChangesAsync();
+            Console.WriteLine($"✅ Đã thêm {cameras.Length} cameras.");
         }
 
         // 2. Seed WeatherLogs (Nếu chưa có)

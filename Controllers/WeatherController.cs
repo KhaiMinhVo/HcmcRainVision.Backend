@@ -144,5 +144,26 @@ namespace HcmcRainVision.Backend.Controllers
             bool isSafe = warnings.Count == 0;
             return Ok(new { IsSafe = isSafe, Warnings = warnings });
         }
+
+        // API: GET api/weather/heatmap
+        // Lấy dữ liệu cho bản đồ nhiệt (Rain Heatmap)
+        // Trả về danh sách điểm có mưa với trọng số dựa trên độ tin cậy của AI
+        [HttpGet("heatmap")]
+        public async Task<IActionResult> GetRainHeatmap()
+        {
+            var timeLimit = DateTime.UtcNow.AddMinutes(-30);
+            
+            var rainingLogs = await _context.WeatherLogs
+                .Where(x => x.IsRaining && x.Timestamp >= timeLimit && x.Location != null)
+                .Select(x => new 
+                {
+                    Lat = x.Location!.Y,      // Vĩ độ
+                    Lng = x.Location!.X,      // Kinh độ
+                    Intensity = x.Confidence  // Độ tin cậy làm cường độ nhiệt
+                })
+                .ToListAsync();
+
+            return Ok(rainingLogs);
+        }
     }
 }

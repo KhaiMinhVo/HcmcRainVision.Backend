@@ -28,6 +28,7 @@ builder.Services.AddHttpClient();
 // 3. Đăng ký các Service (Dependency Injection)
 builder.Services.AddSingleton<ICameraCrawler, CameraCrawler>();
 builder.Services.AddSingleton<IImagePreProcessor, ImagePreProcessor>();
+builder.Services.AddSingleton<ICloudStorageService, CloudStorageService>();
 
 // 4. Đăng ký Background Worker (Chạy ngầm)
 builder.Services.AddHostedService<RainScanningWorker>();
@@ -45,6 +46,9 @@ builder.Services.AddSingleton<RainPredictionService>();
 
 // 6. Đăng ký Email Service
 builder.Services.AddTransient<IEmailService, EmailService>();
+
+// 6.1. Đăng ký Firebase Push Notification Service
+builder.Services.AddSingleton<IFirebasePushService, FirebasePushService>();
 
 // 7. Đăng ký JWT Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

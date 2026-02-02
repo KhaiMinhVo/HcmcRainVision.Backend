@@ -117,5 +117,54 @@ namespace HcmcRainVision.Backend.Controllers
             string status = user.IsActive ? "Đã mở khóa" : "Đã khóa";
             return Ok(new { message = $"{status} tài khoản {user.Username}" });
         }
+
+        // 5. Thống kê tần suất mưa theo giờ
+        [HttpGet("stats/rain-frequency")]
+        public async Task<IActionResult> GetRainFrequency()
+        {
+            // Thống kê số lượng bản ghi mưa theo từng giờ trong 7 ngày qua
+            var weekAgo = DateTime.UtcNow.AddDays(-7);
+            
+            var stats = await _context.WeatherLogs
+                .Where(x => x.IsRaining && x.Timestamp >= weekAgo)
+                .GroupBy(x => x.Timestamp.Hour)
+                .Select(g => new { Hour = g.Key, Count = g.Count() })
+                .OrderBy(x => x.Hour)
+                .ToListAsync();
+
+            return Ok(stats);
+        }
+
+        // 6. Lấy danh sách camera lỗi (không có dữ liệu trong 1 giờ qua)
+        [HttpGet("stats/failed-cameras")]
+        public async Task<IActionResult> GetFailedCameras()
+        {
+            var oneHourAgo = DateTime.UtcNow.AddHours(-1);
+            
+            // Lấy danh sách camera có dữ liệu mới
+            var activeCameraIds = await _context.WeatherLogs
+                .Where(x => x.Timestamp > oneHourAgo)
+                .Select(x => x.CameraId)
+                .Distinct()
+                .ToListAsync();
+
+            // Lấy camera KHÔNG có trong danh sách active
+            var failedCameras = await _context.Cameras
+                .Where(c => !activeCameraIds.Contains(c.Id))
+                .Select(c => new {
+                    c.Id,
+                    c.Name,
+                    c.SourceUrl,
+                    c.Latitude,
+                    c.Longitude,
+                    Status = "Offline - Không có dữ liệu mới"
+                })
+                .ToListAsync();
+
+            return Ok(new {
+                TotalFailed = failedCameras.Count,
+                Cameras = failedCameras
+            });
+        }
     }
 }
