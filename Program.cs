@@ -80,14 +80,12 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Seed test data (chỉ chạy khi development và DB trống)
-if (app.Environment.IsDevelopment())
+// Seed test data (tạm thời cho phép chạy ở mọi môi trường để khởi tạo dữ liệu)
+// TODO: Sau khi có dữ liệu, nên thêm lại điều kiện IsDevelopment() để bảo mật
+using (var scope = app.Services.CreateScope())
 {
-    using (var scope = app.Services.CreateScope())
-    {
-        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await TestDataSeeder.SeedTestData(dbContext);
-    }
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await TestDataSeeder.SeedTestData(dbContext);
 }
 
 // Pipeline
