@@ -14,12 +14,21 @@ public static class TestDataSeeder
             Console.WriteLine("📷 Đang thêm dữ liệu Camera mẫu...");
             var cameras = new[]
             {
-                // Camera từ hệ thống giao thông TP.HCM
+                // ===============================================
+                // HƯỚNG DẪN LẤY URL CAMERA THẬT:
+                // 1. Vào: http://giaothong.hochiminhcity.gov.vn
+                // 2. Click vào bản đồ, chọn camera
+                // 3. Chuột phải vào ảnh → "Open image in new tab"
+                // 4. Copy URL có dạng: .../ImageHandler.ashx?id=...
+                // ===============================================
+                
+                // Camera thật từ hệ thống giao thông TP.HCM (thay ?id=... bằng ID thật)
                 new Camera 
                 { 
                     Id = "CAM_Q1_001", 
                     Name = "Ngã tư Lê Duẩn - Pasteur (Q1)", 
-                    SourceUrl = "TEST_MODE", // Thay bằng URL thật khi có
+                    // TODO: Thay bằng URL thật từ http://giaothong.hochiminhcity.gov.vn
+                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f707",
                     Latitude = 10.7797, 
                     Longitude = 106.6990 
                 },
@@ -27,7 +36,7 @@ public static class TestDataSeeder
                 { 
                     Id = "CAM_Q1_002", 
                     Name = "Vòng xoay Quách Thị Trang (Q1)", 
-                    SourceUrl = "TEST_MODE",
+                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f708",
                     Latitude = 10.7712, 
                     Longitude = 106.6983 
                 },
@@ -35,7 +44,7 @@ public static class TestDataSeeder
                 { 
                     Id = "CAM_Q3_001", 
                     Name = "Ngã tư CMT8 - Cách Mạng Tháng 8 (Q3)", 
-                    SourceUrl = "TEST_MODE",
+                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f709",
                     Latitude = 10.7785, 
                     Longitude = 106.6897 
                 },
@@ -43,7 +52,7 @@ public static class TestDataSeeder
                 { 
                     Id = "CAM_Q5_001", 
                     Name = "Chợ An Đông (Q5)", 
-                    SourceUrl = "TEST_MODE",
+                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70a",
                     Latitude = 10.7550, 
                     Longitude = 106.6520 
                 },
@@ -51,7 +60,7 @@ public static class TestDataSeeder
                 { 
                     Id = "CAM_Q7_001", 
                     Name = "Phú Mỹ Hưng (Q7)", 
-                    SourceUrl = "TEST_MODE",
+                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70b",
                     Latitude = 10.7290, 
                     Longitude = 106.7200 
                 },
@@ -59,7 +68,7 @@ public static class TestDataSeeder
                 { 
                     Id = "CAM_BINHTAN_001", 
                     Name = "Cầu Bình Triệu (Bình Tân)", 
-                    SourceUrl = "TEST_MODE",
+                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70c",
                     Latitude = 10.8000, 
                     Longitude = 106.6300 
                 },
@@ -67,15 +76,16 @@ public static class TestDataSeeder
                 { 
                     Id = "CAM_TAN_BINH_001", 
                     Name = "Sân bay Tân Sơn Nhất (Tân Bình)", 
-                    SourceUrl = "TEST_MODE",
+                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70d",
                     Latitude = 10.8185, 
                     Longitude = 106.6595 
                 },
+                // Camera TEST MODE (fallback khi không có camera thật)
                 new Camera 
                 { 
                     Id = "CAM_TEST_01", 
                     Name = "Camera Test Mode (Bến Thành)", 
-                    SourceUrl = "TEST_MODE", 
+                    SourceUrl = "TEST_MODE", // Dùng ảnh giả lập
                     Latitude = 10.762622, 
                     Longitude = 106.660172 
                 }

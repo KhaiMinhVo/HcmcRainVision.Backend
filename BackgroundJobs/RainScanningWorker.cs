@@ -60,7 +60,10 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     }
                     else
                     {
-                        // Xử lý song song
+                        // 🚀 XỬ LÝ SONG SONG
+                        // MaxDegreeOfParallelism = 5: Xử lý tối đa 5 cameras cùng lúc
+                        // - Tăng lên 10-15 nếu server mạnh và có nhiều cameras
+                        // - Giảm xuống 2-3 nếu server yếu hoặc bandwidth hạn chế
                         var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = stoppingToken };
 
                         await Parallel.ForEachAsync(cameraIds, parallelOptions, async (camId, token) =>
@@ -188,6 +191,10 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     _logger.LogError($"❌ Worker Error: {ex.Message}");
                 }
 
+                // ⏰ TẦN SUẤT QUÉT: 5 phút (Có thể điều chỉnh)
+                // - Giảm xuống 2-3 phút để update nhanh hơn (khuyến nghị production)
+                // - Tăng lên 10 phút để tiết kiệm bandwidth (development)
+                // ⚠️ Lưu ý: Quét quá nhanh (< 1 phút) có thể bị server camera block
                 await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
             }
         }
