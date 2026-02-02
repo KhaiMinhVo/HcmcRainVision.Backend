@@ -12,6 +12,16 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 
+// ===================================================================
+// HCMC Rain Vision Backend API
+// 
+// QUAN TRỌNG - CHÍNH SÁCH SỬ DỤNG DỮ LIỆU:
+// - Dữ liệu camera từ: http://giaothong.hochiminhcity.gov.vn
+// - Mục đích: Nghiên cứu, học tập, phi lợi nhuận
+// - Frontend PHẢI hiển thị: "Dữ liệu camera từ Cổng thông tin giao thông TP.HCM"
+// - Xem thêm: POLICY.md
+// ===================================================================
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Load local configuration file if exists (for sensitive credentials)

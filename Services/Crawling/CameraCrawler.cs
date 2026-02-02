@@ -14,11 +14,13 @@ namespace HcmcRainVision.Backend.Services.Crawling
         private readonly IWebHostEnvironment _env;
         
         // Danh sách User-Agent để thay đổi liên tục, tránh bị firewall phát hiện là bot
+        // QUAN TRỌNG: Luôn bao gồm thông tin dự án để admin server gốc có thể liên hệ nếu cần
         private readonly string[] _userAgents = new[]
         {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+            "HcmcRainVision/1.0 (+https://github.com/KhaiMinhVo/HcmcRainVision.Backend; khaivpmse184623@fpt.edu.vn)" // Custom agent với thông tin liên hệ
         };
 
         public CameraCrawler(IHttpClientFactory httpClientFactory, ILogger<CameraCrawler> logger, IWebHostEnvironment env)

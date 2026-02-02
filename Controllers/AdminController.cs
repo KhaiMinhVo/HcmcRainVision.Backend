@@ -166,5 +166,79 @@ namespace HcmcRainVision.Backend.Controllers
                 Cameras = failedCameras
             });
         }
+
+        // 7. Kiểm tra health (sức khỏe) của tất cả camera URLs
+        [HttpGet("stats/check-camera-health")]
+        public async Task<IActionResult> CheckCameraHealth()
+        {
+            var cameras = await _context.Cameras.ToListAsync();
+            var results = new List<object>();
+            
+            using var httpClient = new HttpClient();
+            
+            // Cấu hình Header giống như CameraCrawler để tránh bị block
+            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            httpClient.DefaultRequestHeaders.Referrer = new Uri("http://giaothong.hochiminhcity.gov.vn/");
+            httpClient.Timeout = TimeSpan.FromSeconds(10);
+
+            foreach (var cam in cameras)
+            {
+                // Bỏ qua camera test mode
+                if (cam.SourceUrl == "TEST_MODE")
+                {
+                    results.Add(new {
+                        Id = cam.Id,
+                        Name = cam.Name,
+                        Status = "Test Mode",
+                        StatusCode = 0,
+                        ResponseTime = 0
+                    });
+                    continue;
+                }
+
+                var startTime = DateTime.UtcNow;
+                try 
+                {
+                    var response = await httpClient.GetAsync(cam.SourceUrl);
+                    var responseTime = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                    
+                    // Kiểm tra content type
+                    var contentType = response.Content.Headers.ContentType?.MediaType;
+                    var isImage = contentType?.StartsWith("image/") ?? false;
+                    
+                    results.Add(new {
+                        Id = cam.Id,
+                        Name = cam.Name,
+                        Status = response.IsSuccessStatusCode && isImage ? "Online" : "Invalid Response",
+                        StatusCode = (int)response.StatusCode,
+                        ResponseTime = Math.Round(responseTime, 0),
+                        ContentType = contentType ?? "unknown"
+                    });
+                } 
+                catch (Exception ex)
+                {
+                    var responseTime = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                    results.Add(new { 
+                        Id = cam.Id,
+                        Name = cam.Name,
+                        Status = "Error/Timeout",
+                        StatusCode = 0,
+                        ResponseTime = Math.Round(responseTime, 0),
+                        Error = ex.Message
+                    });
+                }
+            }
+            
+            var summary = new {
+                TotalCameras = cameras.Count,
+                Online = results.Count(r => r.GetType().GetProperty("Status")?.GetValue(r)?.ToString() == "Online"),
+                Offline = results.Count(r => r.GetType().GetProperty("Status")?.GetValue(r)?.ToString() != "Online" && 
+                                             r.GetType().GetProperty("Status")?.GetValue(r)?.ToString() != "Test Mode"),
+                TestMode = results.Count(r => r.GetType().GetProperty("Status")?.GetValue(r)?.ToString() == "Test Mode"),
+                CheckedAt = DateTime.UtcNow
+            };
+            
+            return Ok(new { Summary = summary, Details = results });
+        }
     }
 }

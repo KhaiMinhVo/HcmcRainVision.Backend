@@ -37,7 +37,35 @@ namespace HcmcRainVision.Backend.Services.ImageProcessing
                     return null;
                 }
 
-                // 2. Tính toán vùng cắt (ROI - Region of Interest)
+                // 2. Xử lý ảnh ban đêm (Night-time enhancement)
+                // Chuyển sang grayscale để tính độ sáng trung bình
+                using var grayMat = new Mat();
+                Cv2.CvtColor(srcMat, grayMat, ColorConversionCodes.BGR2GRAY);
+                double avgBrightness = grayMat.Mean()[0];
+                
+                _logger.LogDebug($"Độ sáng trung bình: {avgBrightness:F2}");
+
+                // Nếu ảnh quá tối (< 50), thực hiện cân bằng histogram để cải thiện độ tương phản
+                if (avgBrightness < 50)
+                {
+                    _logger.LogInformation($"⚡ Đang tối ưu ảnh ban đêm (brightness: {avgBrightness:F2})...");
+                    
+                    // Cân bằng histogram cho từng kênh màu BGR
+                    var channels = Cv2.Split(srcMat);
+                    for (int i = 0; i < channels.Length; i++)
+                    {
+                        Cv2.EqualizeHist(channels[i], channels[i]);
+                    }
+                    Cv2.Merge(channels, srcMat);
+                    
+                    // Giải phóng bộ nhớ các kênh
+                    foreach (var channel in channels)
+                    {
+                        channel.Dispose();
+                    }
+                }
+
+                // 3. Tính toán vùng cắt (ROI - Region of Interest)
                 // Mục tiêu: Bỏ 15% trên (timestamp) và 10% dưới (logo)
                 int cropY = (int)(srcMat.Rows * 0.15); // Bắt đầu từ 15% chiều cao
                 int cropHeight = (int)(srcMat.Rows * 0.75); // Lấy 75% chiều cao giữa (100% - 15% trên - 10% dưới)
@@ -50,11 +78,11 @@ namespace HcmcRainVision.Backend.Services.ImageProcessing
                 // Thực hiện cắt
                 using var croppedMat = new Mat(srcMat, roi);
 
-                // 3. Resize về kích thước chuẩn của Model (thường là 224x224 hoặc 256x256)
+                // 4. Resize về kích thước chuẩn của Model (thường là 224x224 hoặc 256x256)
                 using var resizedMat = new Mat();
                 Cv2.Resize(croppedMat, resizedMat, new Size(targetWidth, targetHeight), 0, 0, InterpolationFlags.Linear);
 
-                // 4. Encode ngược lại thành byte[] để trả về (hoặc đưa vào ML.NET)
+                // 5. Encode ngược lại thành byte[] để trả về (hoặc đưa vào ML.NET)
                 // Dùng đuôi .jpg để nén nhẹ
                 return resizedMat.ImEncode(".jpg");
             }
