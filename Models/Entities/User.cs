@@ -33,6 +33,10 @@ namespace HcmcRainVision.Backend.Models.Entities
         // 2. Trạng thái (để Admin khóa tài khoản)
         public bool IsActive { get; set; } = true;
 
+        // Token Firebase để gửi thông báo push
+        [MaxLength(255)]
+        public string? DeviceToken { get; set; }
+
         // 3. Quan hệ: Danh sách Camera yêu thích
         public ICollection<FavoriteCamera> FavoriteCameras { get; set; } = new List<FavoriteCamera>();
         

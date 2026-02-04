@@ -1,454 +1,304 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.SignalR;
-using NetTopologySuite.Geometries;
 using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.Entities;
 using HcmcRainVision.Backend.Services.AI;
 using HcmcRainVision.Backend.Services.Crawling;
-using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.Notification;
-using HcmcRainVision.Backend.Hubs;
+using Microsoft.EntityFrameworkCore;
 
 namespace HcmcRainVision.Backend.BackgroundJobs
 {
     public class RainScanningWorker : BackgroundService
     {
-        private readonly ILogger<RainScanningWorker> _logger;
         private readonly IServiceProvider _serviceProvider;
+        private readonly ILogger<RainScanningWorker> _logger;
         private readonly IWebHostEnvironment _env;
-        private readonly IHubContext<RainHub> _hubContext;
 
-        public RainScanningWorker(
-            ILogger<RainScanningWorker> logger, 
-            IServiceProvider serviceProvider,
-            IWebHostEnvironment env,
-            IHubContext<RainHub> hubContext)
+        // Cờ chống chồng chéo (Locking)
+        private static bool _isJobRunning = false;
+
+        public RainScanningWorker(IServiceProvider serviceProvider, ILogger<RainScanningWorker> logger, IWebHostEnvironment env)
         {
-            _logger = logger;
             _serviceProvider = serviceProvider;
+            _logger = logger;
             _env = env;
-            _hubContext = hubContext;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            string webRootPath = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
-            string saveFolder = Path.Combine(webRootPath, "images", "rain_logs");
-            
-            if (!Directory.Exists(saveFolder)) Directory.CreateDirectory(saveFolder);
+            _logger.LogInformation("Rain Scanning Worker starting...");
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
-
-                // --- 1. CHỐNG CHỒNG CHÉO (OVERLAP PROTECTION) ---
-                using (var scope = _serviceProvider.CreateScope())
+                // 1. CƠ CHẾ CHỐNG CHỒNG CHÉO (OVERLAP PROTECTION)
+                if (_isJobRunning)
                 {
-                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    var isJobRunning = await db.IngestionJobs
-                        .AnyAsync(j => j.Status == "Running" 
-                                  && j.StartedAt > DateTime.UtcNow.AddMinutes(-10), stoppingToken);
-
-                    if (isJobRunning)
-                    {
-                        _logger.LogWarning("⚠️ Job cũ chưa chạy xong. Bỏ qua lượt này.");
-                        await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-                        continue;
-                    }
+                    _logger.LogWarning("⚠️ Job cũ chưa chạy xong. Bỏ qua lượt quét này để bảo vệ server.");
+                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                    continue;
                 }
 
-                // --- 2. TẠO INGESTION JOB MỚI ---
+                _isJobRunning = true; // Khóa Job
                 Guid jobId = Guid.NewGuid();
-                using (var scope = _serviceProvider.CreateScope())
-                {
-                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    var job = new IngestionJob 
-                    { 
-                        JobId = jobId,
-                        JobType = "RainScan",
-                        Status = "Running",
-                        StartedAt = DateTime.UtcNow 
-                    };
-                    db.IngestionJobs.Add(job);
-                    await db.SaveChangesAsync();
-                    _logger.LogInformation($"🚀 Bắt đầu Job quét #{jobId}");
-                }
 
                 try
                 {
-                    // Lấy danh sách STREAM thay vì Camera ID
-                    List<CameraStream> activeStreams;
-                    using (var scope = _serviceProvider.CreateScope())
-                    {
-                        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                        activeStreams = await dbContext.CameraStreams
-                            .Include(s => s.Camera)
-                            .ThenInclude(c => c.Ward)
-                            .Where(s => s.IsActive && s.IsPrimary)
-                            .ToListAsync(stoppingToken);
-                    }
-
-                    if (activeStreams.Count == 0)
-                    {
-                        _logger.LogWarning("⚠️ Không tìm thấy camera stream nào đang active!");
-                    }
-                    else
-                    {
-                        // 🚀 XỬ LÝ SONG SONG
-                        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = stoppingToken };
-
-                        await Parallel.ForEachAsync(activeStreams, parallelOptions, async (stream, token) =>
-                        {
-                            var attemptStartTime = DateTime.UtcNow;
-                            string attemptStatus = "Success";
-                            string? errorMessage = null;
-                            int latencyMs = 0;
-                            
-                            try
-                            {
-                                using var scope = _serviceProvider.CreateScope();
-                                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                                
-                                // Load lại Camera để có thể update status
-                                var cam = await dbContext.Cameras.FindAsync(new object[] { stream.CameraId }, token);
-                                if (cam == null) 
-                                {
-                                    attemptStatus = "Failed";
-                                    errorMessage = "Camera not found";
-                                    return;
-                                }
-
-                                var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
-                                var processor = scope.ServiceProvider.GetRequiredService<IImagePreProcessor>();
-                                var aiService = scope.ServiceProvider.GetRequiredService<RainPredictionService>();
-                                var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
-
-                                // --- BƯỚC 1: CRAWL (Dùng StreamUrl từ bảng mới) ---
-                                var crawlStartTime = DateTime.UtcNow;
-                                byte[]? rawBytes = await crawler.FetchImageAsync(stream.StreamUrl);
-                                latencyMs = (int)(DateTime.UtcNow - crawlStartTime).TotalMilliseconds;
-                                
-                                if (rawBytes == null || rawBytes.Length == 0) 
-                                {
-                                    attemptStatus = "Failed";
-                                    errorMessage = "Failed to fetch image";
-                                    
-                                    // Cập nhật trạng thái camera thành Offline
-                                    if (cam.Status != "Offline")
-                                    {
-                                        cam.Status = "Offline";
-                                        dbContext.Cameras.Update(cam);
-                                    }
-                                    
-                                    // Ghi log trạng thái Offline
-                                    dbContext.CameraStatusLogs.Add(new CameraStatusLog 
-                                    { 
-                                        CameraId = cam.Id, 
-                                        Status = "Offline",
-                                        Reason = "Failed to fetch image",
-                                        CheckedAt = DateTime.UtcNow 
-                                    });
-                                    await dbContext.SaveChangesAsync(token);
-                                    return;
-                                }
-                                
-                                // Camera hoạt động bình thường - cập nhật status Active
-                                if (cam.Status != "Active")
-                                {
-                                    cam.Status = "Active";
-                                    dbContext.Cameras.Update(cam);
-                                }
-                                
-                                // Ghi log trạng thái Online
-                                dbContext.CameraStatusLogs.Add(new CameraStatusLog 
-                                { 
-                                    CameraId = cam.Id, 
-                                    Status = "Online",
-                                    CheckedAt = DateTime.UtcNow 
-                                });
-
-                                // --- BƯỚC 2: PRE-PROCESS ---
-                                byte[]? processedBytes = processor.ProcessForAI(rawBytes);
-                                if (processedBytes == null) return;
-
-                                // --- BƯỚC 3: AI DETECT ---
-                                var prediction = aiService.Predict(processedBytes);
-
-                                // --- BƯỚC 4: LOGIC XỬ LÝ KẾT QUẢ & GỬI THÔNG BÁO ---
-                                string? savedImageUrl = null;
-                                
-                                // Kiểm tra xem có nên lưu ảnh không
-                                bool isUnsure = prediction.Confidence > 0.4f && prediction.Confidence < 0.6f;
-                                bool randomSample = new Random().Next(0, 100) < 5;
-                                bool shouldSaveImage = prediction.IsRaining || isUnsure || randomSample;
-
-                                if (shouldSaveImage)
-                                {
-                                    string fileName = $"{cam.Id}_{DateTime.UtcNow.Ticks}.jpg";
-                                    var cloudStorage = scope.ServiceProvider.GetRequiredService<ICloudStorageService>();
-                                    var cloudinaryUrl = await cloudStorage.UploadImageAsync(processedBytes, fileName);
-                                    
-                                    if (!string.IsNullOrEmpty(cloudinaryUrl))
-                                    {
-                                        savedImageUrl = cloudinaryUrl;
-                                        _logger.LogInformation($"☁️ Đã upload lên Cloudinary: {cloudinaryUrl}");
-                                    }
-                                    else
-                                    {
-                                        string fullPath = Path.Combine(saveFolder, fileName);
-                                        await File.WriteAllBytesAsync(fullPath, processedBytes, token);
-                                        savedImageUrl = $"/images/rain_logs/{fileName}";
-                                        _logger.LogWarning($"⚠️ Cloudinary không khả dụng, lưu local: {savedImageUrl}");
-                                    }
-                                }
-
-                                if (prediction.IsRaining)
-                                {
-                                    // --- GỬI THÔNG BÁO BẰNG ALERTSUBSCRIPTION (MỚI) ---
-                                    if (!string.IsNullOrEmpty(cam.WardId))
-                                    {
-                                        var subscriptions = await dbContext.AlertSubscriptions
-                                            .Include(s => s.User)
-                                            .ThenInclude(u => u.UserNotificationSettings)
-                                            .Where(s => s.IsEnabled 
-                                                     && s.WardId == cam.WardId 
-                                                     && prediction.Confidence >= s.ThresholdProbability)
-                                            .ToListAsync(token);
-
-                                        if (subscriptions.Any())
-                                        {
-                                            _logger.LogInformation($"📡 Tìm thấy {subscriptions.Count} subscriptions cho Ward {cam.WardId}");
-                                            
-                                            // TODO: Implement Firebase notification
-                                            // foreach (var sub in subscriptions)
-                                            // {
-                                            //     var deviceToken = sub.User.UserNotificationSettings.FirstOrDefault()?.DeviceToken;
-                                            //     if (!string.IsNullOrEmpty(deviceToken))
-                                            //     {
-                                            //         await firebaseService.SendToDeviceAsync(deviceToken, "Mưa rồi!", $"Mưa tại {cam.Name}");
-                                            //     }
-                                            // }
-                                        }
-                                    }
-
-                                    // Gửi SignalR
-                                    await _hubContext.Clients.All.SendAsync("ReceiveRainAlert", new
-                                    {
-                                        CameraId = cam.Id,
-                                        CameraName = cam.Name,
-                                        Latitude = cam.Latitude,
-                                        Longitude = cam.Longitude,
-                                        ImageUrl = savedImageUrl,
-                                        Confidence = prediction.Confidence,
-                                        Time = DateTime.UtcNow
-                                    }, token);
-
-                                    // Gửi Email (confidence cao)
-                                    if (prediction.Confidence > 0.7)
-                                    {
-                                        string subject = $"⚠️ CẢNH BÁO MƯA: {cam.Name}";
-                                        string body = $"<p>Phát hiện mưa tại <b>{cam.Name}</b> lúc {DateTime.Now}</p><p>Độ tin cậy: {prediction.Confidence*100:0}%</p>";
-                                        _ = emailService.SendEmailAsync("khaivpmse184623@fpt.edu.vn", subject, body);
-                                    }
-
-                                    _logger.LogInformation($"📡 Đã gửi Alert cho {cam.Id}");
-                                }
-
-                                // --- BƯỚC 5: LƯU LOG ---
-                                var weatherLog = new WeatherLog
-                                {
-                                    CameraId = cam.Id,
-                                    Timestamp = DateTime.UtcNow,
-                                    IsRaining = prediction.IsRaining,
-                                    Confidence = prediction.Confidence,
-                                    Location = new Point(cam.Longitude, cam.Latitude) { SRID = 4326 },
-                                    ImageUrl = savedImageUrl
-                                };
-
-                                dbContext.WeatherLogs.Add(weatherLog);
-                                
-                                // Lưu tất cả thay đổi (bao gồm update Camera và insert WeatherLog)
-                                await dbContext.SaveChangesAsync(token);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError($"❌ Lỗi stream {stream.CameraId}: {ex.Message}");
-                                attemptStatus = "Failed";
-                                errorMessage = ex.Message;
-                            }
-                            finally
-                            {
-                                // --- GHI INGESTION ATTEMPT ---
-                                try
-                                {
-                                    using var scope = _serviceProvider.CreateScope();
-                                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                                    
-                                    var attempt = new IngestionAttempt
-                                    {
-                                        JobId = jobId,
-                                        CameraId = stream.CameraId,
-                                        Status = attemptStatus,
-                                        LatencyMs = latencyMs,
-                                        HttpStatus = attemptStatus == "Success" ? 200 : 500,
-                                        ErrorMessage = errorMessage,
-                                        AttemptAt = attemptStartTime
-                                    };
-                                    
-                                    db.IngestionAttempts.Add(attempt);
-                                    await db.SaveChangesAsync();
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogError($"⚠️ Không thể ghi IngestionAttempt: {ex.Message}");
-                                }
-                            }
-                        });
-                    }
-                    
-                    // --- 3. CẬP NHẬT JOB HOÀN TẤT ---
                     using (var scope = _serviceProvider.CreateScope())
                     {
                         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                        var job = await db.IngestionJobs.FindAsync(jobId);
-                        if (job != null)
+                        var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
+                        var aiService = scope.ServiceProvider.GetRequiredService<RainPredictionService>();
+                        var firebaseService = scope.ServiceProvider.GetRequiredService<IFirebasePushService>();
+
+                        // Tạo Job Log
+                        var job = new IngestionJob { JobId = jobId, JobType = "Scheduled", Status = "Running", StartedAt = DateTime.UtcNow };
+                        db.IngestionJobs.Add(job);
+                        await db.SaveChangesAsync();
+
+                        // Lấy danh sách Stream đang Active
+                        var streams = await db.CameraStreams
+                            .Include(s => s.Camera)
+                                .ThenInclude(c => c.Ward)
+                            .Where(s => s.IsActive && s.Camera.Status != "Maintenance")
+                            .ToListAsync(stoppingToken);
+
+                        _logger.LogInformation($"Đã tải {streams.Count} CameraStream cần quét.");
+
+                        // Xử lý song song (Max 5 camera cùng lúc)
+                        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = stoppingToken };
+
+                        await Parallel.ForEachAsync(streams, parallelOptions, async (stream, token) =>
                         {
-                            job.Status = "Completed";
-                            job.EndedAt = DateTime.UtcNow;
-                            job.Notes = $"Processed {activeStreams.Count} camera streams";
-                            await db.SaveChangesAsync();
-                            _logger.LogInformation($"✅ Hoàn thành Job #{jobId}");
-                        }
+                            await ProcessCameraAsync(stream, jobId, scope.ServiceProvider, token);
+                        });
+
+                        // Kết thúc Job
+                        job.Status = "Completed";
+                        job.EndedAt = DateTime.UtcNow;
+                        job.Notes = $"Processed {streams.Count} streams";
+                        await db.SaveChangesAsync();
+                        
+                        _logger.LogInformation($"✅ Hoàn thành Job #{jobId}");
+                        
+                        // Dọn dẹp ảnh cũ
+                        await CleanupOldImagesAsync();
+                        
+                        // Dọn dẹp logs cũ
+                        await CleanupOldDataAsync(db, stoppingToken);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError($"❌ Worker Error: {ex.Message}");
-                    
-                    // Cập nhật Job thành Failed
-                    try
-                    {
-                        using var scope = _serviceProvider.CreateScope();
-                        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                        var job = await db.IngestionJobs.FindAsync(jobId);
-                        if (job != null)
-                        {
-                            job.Status = "Failed";
-                            job.EndedAt = DateTime.UtcNow;
-                            job.Notes = $"Error: {ex.Message}";
-                            await db.SaveChangesAsync();
-                        }
-                    }
-                    catch { /* Ignore */ }
+                    _logger.LogError(ex, "Critical error in RainScanningWorker");
+                }
+                finally
+                {
+                    _isJobRunning = false; // Mở khóa
                 }
 
-                // --- 3. CLEANUP (DỌN DẸP DỮ LIỆU CŨ) ---
-                await CleanupOldDataAsync(stoppingToken);
-
-                // ⏰ TẦN SUẤT QUÉT: 5 phút (Có thể điều chỉnh)
-                // - Giảm xuống 2-3 phút để update nhanh hơn (khuyến nghị production)
-                // - Tăng lên 10 phút để tiết kiệm bandwidth (development)
-                // ⚠️ Lưu ý: Quét quá nhanh (< 1 phút) có thể bị server camera block
+                // Chờ 5 phút
                 await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
             }
         }
 
-        /// <summary>
-        /// Dọn dẹp dữ liệu cũ (Logs, Jobs, Status)
-        /// Chỉ giữ dữ liệu trong 7 ngày để tránh database phình to
-        /// </summary>
-        private async Task CleanupOldDataAsync(CancellationToken token)
+        private async Task ProcessCameraAsync(CameraStream stream, Guid jobId, IServiceProvider services, CancellationToken token)
         {
+            using var scope = services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
+            var aiService = scope.ServiceProvider.GetRequiredService<RainPredictionService>();
+            var firebaseService = scope.ServiceProvider.GetRequiredService<IFirebasePushService>();
+
+            var attempt = new IngestionAttempt { AttemptId = Guid.NewGuid(), JobId = jobId, CameraId = stream.CameraId, AttemptAt = DateTime.UtcNow };
+            var attemptStartTime = DateTime.UtcNow;
+
             try
             {
-                using var scope = _serviceProvider.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var threshold = DateTime.UtcNow.AddDays(-7);
-
-                // Xóa Ingestion Attempts cũ
-                await db.Database.ExecuteSqlRawAsync(
-                    "DELETE FROM ingestion_attempts WHERE attempt_at < {0}", 
-                    threshold);
-
-                // Xóa Ingestion Jobs cũ
-                await db.Database.ExecuteSqlRawAsync(
-                    "DELETE FROM ingestion_jobs WHERE started_at < {0}", 
-                    threshold);
-
-                // Xóa Camera Status Logs cũ
-                await db.Database.ExecuteSqlRawAsync(
-                    "DELETE FROM camera_status_logs WHERE checked_at < {0}", 
-                    threshold);
-
-                _logger.LogInformation($"🧹 Đã dọn dẹp dữ liệu cũ hơn 7 ngày.");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"⚠️ Lỗi khi dọn dẹp dữ liệu: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Dọn dẹp ảnh cũ và WeatherLog
-        /// Xóa cả file ảnh VÀ record trong Database
-        /// Đảm bảo đồng bộ giữa filesystem và DB để tránh lỗi 404
-        /// </summary>
-        private async Task CleanupOldData(CancellationToken token)
-        {
-            try
-            {
-                using var scope = _serviceProvider.CreateScope();
-                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var cutoff = DateTime.UtcNow.AddDays(-7);
-
-                // 1. Tìm các logs cũ có ảnh
-                var oldLogs = await dbContext.WeatherLogs
-                    .Where(x => x.Timestamp < cutoff && x.ImageUrl != null)
-                    .ToListAsync(token);
-
-                if (oldLogs.Count > 0)
+                // 1. Crawl ảnh
+                byte[]? imageBytes = await crawler.FetchImageAsync(stream.StreamUrl);
+                double latencyMs = (DateTime.UtcNow - attemptStartTime).TotalMilliseconds;
+                
+                if (imageBytes == null)
                 {
-                    // 2. Xóa file trên đĩa (Tối ưu: xử lý theo batch để tránh treo Worker)
-                    string webRootPath = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
-                    int deletedFiles = 0;
+                    attempt.Status = "Failed";
+                    attempt.ErrorMessage = "Connection Timeout";
+                    attempt.LatencyMs = (int)latencyMs;
                     
-                    // Chỉ xử lý 100 bản ghi mỗi lần để tránh quá tải
-                    var logsToDelete = oldLogs.Take(100).ToList();
-
-                    foreach (var log in logsToDelete)
+                    // Log offline
+                    var statusLog = new CameraStatusLog
                     {
-                        if (!string.IsNullOrEmpty(log.ImageUrl))
-                        {
-                            // Chuyển URL relative thành đường dẫn tuyệt đối
-                            // log.ImageUrl vd: "/images/rain_logs/abc.jpg" -> bỏ dấu / đầu
-                            var filePath = Path.Combine(webRootPath, log.ImageUrl.TrimStart('/', '\\').Replace("/", Path.DirectorySeparatorChar.ToString()));
+                        CameraId = stream.CameraId,
+                        Status = "Offline",
+                        CheckedAt = DateTime.UtcNow,
+                        Reason = "Connection Timeout"
+                    };
+                    db.CameraStatusLogs.Add(statusLog);
+                    
+                    // Update Camera Status -> Offline
+                    var camera = await db.Cameras.FindAsync(new object[] { stream.CameraId }, token);
+                    if (camera != null)
+                    {
+                        camera.Status = "Offline";
+                    }
+                }
+                else
+                {
+                    attempt.Status = "Success";
+                    attempt.HttpStatus = 200;
+                    attempt.LatencyMs = (int)latencyMs;
+                    
+                    // Lưu ảnh (Tạm thời lưu disk)
+                    string fileName = $"{stream.CameraId}_{DateTime.UtcNow.Ticks}.jpg";
+                    string savePath = Path.Combine(_env.WebRootPath, "images", "rain_logs", fileName);
+                    Directory.CreateDirectory(Path.GetDirectoryName(savePath)!);
+                    await File.WriteAllBytesAsync(savePath, imageBytes, token);
+                    string imageUrl = $"/images/rain_logs/{fileName}";
 
-                            if (File.Exists(filePath))
-                            {
-                                try
-                                {
-                                    // Chạy xóa file ở luồng phụ để không block Worker
-                                    await Task.Run(() => File.Delete(filePath), token);
-                                    deletedFiles++;
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogWarning($"⚠️ Không thể xóa file {filePath}: {ex.Message}");
-                                }
-                            }
-                        }
+                    // 2. AI Dự báo
+                    var prediction = aiService.Predict(imageBytes);
+
+                    // 3. Logic Chống Spam Thông Báo (QUAN TRỌNG)
+                    // Lấy log gần nhất của camera này để so sánh
+                    var lastLog = await db.WeatherLogs
+                        .Where(l => l.CameraId == stream.CameraId)
+                        .OrderByDescending(l => l.Timestamp)
+                        .FirstOrDefaultAsync(token);
+
+                    bool isRainingNow = prediction.IsRaining;
+                    bool wasRainingBefore = lastLog?.IsRaining ?? false;
+
+                    // Chỉ gửi thông báo nếu: Hiện tại Mưa VÀ (Trước đó không mưa HOẶC Lần đầu tiên chạy)
+                    if (isRainingNow && !wasRainingBefore)
+                    {
+                        await SendNotificationsAsync(stream, prediction.Confidence, db, firebaseService);
                     }
 
-                    // 3. Xóa records trong DB
-                    dbContext.WeatherLogs.RemoveRange(logsToDelete);
-                    await dbContext.SaveChangesAsync(token);
-
-                    _logger.LogInformation($"🧹 Đã dọn dẹp {logsToDelete.Count} bản ghi cũ và {deletedFiles} file ảnh.");
+                    // 4. Lưu Log Kết quả
+                    var weatherLog = new WeatherLog
+                    {
+                        CameraId = stream.CameraId,
+                        IsRaining = isRainingNow,
+                        Confidence = prediction.Confidence,
+                        ImageUrl = imageUrl,
+                        Timestamp = DateTime.UtcNow,
+                        Location = NetTopologySuite.Geometries.Point.Empty
+                    };
+                    db.WeatherLogs.Add(weatherLog);
+                    
+                    // Log online
+                    var statusLog = new CameraStatusLog
+                    {
+                        CameraId = stream.CameraId,
+                        Status = "Online",
+                        CheckedAt = DateTime.UtcNow
+                    };
+                    db.CameraStatusLogs.Add(statusLog);
+                    
+                    // Update Camera Status -> Active
+                    var camera = await db.Cameras.FindAsync(new object[] { stream.CameraId }, token);
+                    if (camera != null)
+                    {
+                        camera.Status = "Active";
+                    }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"⚠️ Lỗi khi dọn dẹp dữ liệu cũ: {ex.Message}");
+                attempt.Status = "Error";
+                attempt.ErrorMessage = ex.Message;
+                _logger.LogError(ex, $"Lỗi xử lý Camera {stream.CameraId}");
+            }
+
+            db.IngestionAttempts.Add(attempt);
+            await db.SaveChangesAsync(token);
+        }
+
+        private async Task SendNotificationsAsync(CameraStream stream, float confidence, AppDbContext db, IFirebasePushService firebase)
+        {
+            if (stream.Camera.WardId == null) return;
+
+            // Tìm những user đăng ký phường này với độ tin cậy thấp hơn hoặc bằng kết quả AI
+            var subscriptions = await db.AlertSubscriptions
+                .Include(s => s.User)
+                .Include(s => s.Ward)
+                .Where(s => s.IsEnabled && s.WardId == stream.Camera.WardId && confidence >= s.ThresholdProbability)
+                .ToListAsync();
+
+            foreach (var sub in subscriptions)
+            {
+                // Gửi Firebase Push Notification
+                if (!string.IsNullOrEmpty(sub.User.DeviceToken))
+                {
+                    try
+                    {
+                        await firebase.SendToDeviceAsync(
+                            sub.User.DeviceToken, 
+                            "Cảnh báo mưa! 🌧️", 
+                            $"Phát hiện mưa tại {stream.Camera.Name} ({stream.Camera.Ward?.WardName})"
+                        );
+                        _logger.LogInformation($"📱 Đã gửi push notification cho {sub.User.Email}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Lỗi gửi push notification cho {sub.User.Email}");
+                    }
+                }
+            }
+        }
+
+        // Tự động xóa ảnh cũ quá 24h
+        private async Task CleanupOldImagesAsync()
+        {
+            try
+            {
+                var folderPath = Path.Combine(_env.WebRootPath, "images", "rain_logs");
+                var dir = new DirectoryInfo(folderPath);
+                if (dir.Exists)
+                {
+                    await Task.Run(() =>
+                    {
+                        foreach (var file in dir.GetFiles())
+                        {
+                            if (file.CreationTimeUtc < DateTime.UtcNow.AddHours(-24))
+                            {
+                                file.Delete();
+                            }
+                        }
+                    });
+                    _logger.LogInformation("🧹 Đã dọn dẹp ảnh cũ hơn 24 giờ.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Lỗi khi cleanup old images");
+            }
+        }
+        
+        private async Task CleanupOldDataAsync(AppDbContext db, CancellationToken token)
+        {
+            try
+            {
+                var cutoffDate = DateTime.UtcNow.AddDays(-7);
+
+                await db.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM ingestion_attempts WHERE attempt_at < {0}",
+                    cutoffDate
+                );
+
+                await db.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM ingestion_jobs WHERE started_at < {0}",
+                    cutoffDate
+                );
+
+                await db.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM camera_status_logs WHERE checked_at < {0}",
+                    cutoffDate
+                );
+
+                _logger.LogInformation("🧹 Đã dọn dẹp dữ liệu cũ hơn 7 ngày.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Lỗi khi cleanup old data");
             }
         }
     }
