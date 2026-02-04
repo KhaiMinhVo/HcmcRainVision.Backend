@@ -133,21 +133,26 @@ Gửi thông báo push đến điện thoại người dùng khi phát hiện m�
 | CAM_TEST_01 | Camera Test Mode | Bến Thành |
 
 **Note:** Hiện tại đang dùng `TEST_MODE`. Để kết nối camera thật:
-- Thay `SourceUrl` bằng URL camera từ hệ thống giao thông TPHCM
+- Thay URL trong bảng `CameraStreams` bằng URL camera thật từ hệ thống giao thông TPHCM
 - Hoặc sử dụng API của nhà cung cấp camera
 
-### 6. 🔐 Database Migration
+### 6. 🔔 Hệ thống Thông báo
 
-Đã tạo entity mới: `UserNotificationSetting`
+Đã tạo entity mới: `AlertSubscription` (thay thế `UserNotificationSetting` cũ)
 
-**Migration:** `AddUserNotificationSettings`
+**Tính năng:**
+- Người dùng đăng ký nhận thông báo theo Phường (Ward)
+- Hỗ trợ ngưỡng tin cậy (Threshold) và bán kính (Radius)
+- Gửi Firebase Push Notification qua DeviceToken
+
+**Migration:** Đã tích hợp vào các migration chính
 
 **Chạy migration:**
 ```bash
 dotnet ef database update
 ```
 
-**Cấu trúc bảng:**
+**Cấu trúc bảng `alert_subscriptions`:**
 - `Id` - Primary key
 - `UserId` - Foreign key đến Users
 - `DeviceToken` - FCM token của thiết bị

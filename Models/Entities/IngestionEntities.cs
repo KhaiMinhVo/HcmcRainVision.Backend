@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using HcmcRainVision.Backend.Models.Enums;
 
 namespace HcmcRainVision.Backend.Models.Entities
 {
@@ -9,7 +10,7 @@ namespace HcmcRainVision.Backend.Models.Entities
         [Key]
         public Guid JobId { get; set; } = Guid.NewGuid();
         public string JobType { get; set; } = "RainScan";
-        public string Status { get; set; } = "Running";
+        public string Status { get; set; } = nameof(JobStatus.Running);
         public DateTime StartedAt { get; set; } = DateTime.UtcNow;
         public DateTime? EndedAt { get; set; }
         public string? Notes { get; set; }
@@ -28,7 +29,7 @@ namespace HcmcRainVision.Backend.Models.Entities
         public IngestionJob Job { get; set; } = null!;
 
         public string? CameraId { get; set; }
-        public string Status { get; set; } = "Success";
+        public string Status { get; set; } = nameof(AttemptStatus.Success);
         public int LatencyMs { get; set; }
         public int HttpStatus { get; set; }
         public string? ErrorMessage { get; set; }

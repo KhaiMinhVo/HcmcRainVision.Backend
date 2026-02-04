@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using HcmcRainVision.Backend.Models.Enums;
 
 namespace HcmcRainVision.Backend.Models.Entities
 {
@@ -21,7 +22,7 @@ namespace HcmcRainVision.Backend.Models.Entities
         public ICollection<CameraStream> Streams { get; set; } = new List<CameraStream>();
         public ICollection<CameraStatusLog> StatusLogs { get; set; } = new List<CameraStatusLog>();
 
-        public string Status { get; set; } = "Active";
+        public string Status { get; set; } = nameof(CameraStatus.Active);
 
         /// <summary>
         /// MD5 Hash của ảnh cuối cùng để phát hiện camera bị treo (stuck)

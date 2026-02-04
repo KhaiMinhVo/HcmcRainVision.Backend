@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.Entities;
+using HcmcRainVision.Backend.Models.Enums;
 
 namespace HcmcRainVision.Backend.Controllers
 {
@@ -42,7 +43,7 @@ namespace HcmcRainVision.Backend.Controllers
                 Latitude = request.Latitude,
                 Longitude = request.Longitude,
                 WardId = request.WardId,
-                Status = "Active"
+                Status = nameof(CameraStatus.Active)
             };
 
             _context.Cameras.Add(camera);

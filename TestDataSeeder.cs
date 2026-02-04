@@ -1,5 +1,6 @@
 using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.Entities;
+using HcmcRainVision.Backend.Models.Enums;
 using NetTopologySuite.Geometries;
 using Microsoft.EntityFrameworkCore;
 
@@ -33,7 +34,7 @@ public static class TestDataSeeder
                     Name = "Ngã tư Lê Duẩn - Pasteur (Q1)",
                     Latitude = 10.7797, 
                     Longitude = 106.6990,
-                    Status = "Active"
+                    Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
                 { 
@@ -41,7 +42,7 @@ public static class TestDataSeeder
                     Name = "Vòng xoay Quách Thị Trang (Q1)",
                     Latitude = 10.7712, 
                     Longitude = 106.6983,
-                    Status = "Active"
+                    Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
                 { 
@@ -49,7 +50,7 @@ public static class TestDataSeeder
                     Name = "Ngã tư CMT8 - Cách Mạng Tháng 8 (Q3)",
                     Latitude = 10.7785, 
                     Longitude = 106.6897,
-                    Status = "Active"
+                    Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
                 { 
@@ -57,7 +58,7 @@ public static class TestDataSeeder
                     Name = "Chợ An Đông (Q5)",
                     Latitude = 10.7550, 
                     Longitude = 106.6520,
-                    Status = "Active"
+                    Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
                 { 
@@ -65,7 +66,7 @@ public static class TestDataSeeder
                     Name = "Phú Mỹ Hưng (Q7)",
                     Latitude = 10.7290, 
                     Longitude = 106.7200,
-                    Status = "Active"
+                    Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
                 { 
@@ -73,7 +74,7 @@ public static class TestDataSeeder
                     Name = "Cầu Bình Triệu (Bình Tân)",
                     Latitude = 10.8000, 
                     Longitude = 106.6300,
-                    Status = "Active"
+                    Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
                 { 
@@ -81,7 +82,7 @@ public static class TestDataSeeder
                     Name = "Sân bay Tân Sơn Nhất (Tân Bình)",
                     Latitude = 10.8185, 
                     Longitude = 106.6595,
-                    Status = "Active"
+                    Status = nameof(CameraStatus.Active)
                 },
                 // Camera TEST MODE (fallback khi không có camera thật)
                 new Camera 
@@ -90,7 +91,7 @@ public static class TestDataSeeder
                     Name = "Camera Test Mode (Bến Thành)",
                     Latitude = 10.762622, 
                     Longitude = 106.660172,
-                    Status = "Active"
+                    Status = nameof(CameraStatus.Active)
                 }
             };
             await context.Cameras.AddRangeAsync(cameras);

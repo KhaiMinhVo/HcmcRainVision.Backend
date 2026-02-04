@@ -159,6 +159,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             var aiService = scope.ServiceProvider.GetRequiredService<IRainPredictionService>();
             var firebaseService = scope.ServiceProvider.GetRequiredService<IFirebasePushService>();
             var cloudService = scope.ServiceProvider.GetRequiredService<ICloudStorageService>();
+            var preProcessor = scope.ServiceProvider.GetRequiredService<IImagePreProcessor>();
 
             var attempt = new IngestionAttempt { AttemptId = Guid.NewGuid(), JobId = jobId, CameraId = stream.CameraId, AttemptAt = DateTime.UtcNow };
             var attemptStartTime = DateTime.UtcNow;
@@ -214,7 +215,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         var stuckLog = new CameraStatusLog
                         {
                             CameraId = stream.CameraId,
-                            Status = "Stuck",
+                            Status = "Stuck", // TODO: Thêm CameraStatus.Stuck vào enum
                             CheckedAt = DateTime.UtcNow,
                             Reason = "Duplicate image hash detected"
                         };
@@ -233,30 +234,55 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     }
                     // ----------------------------------------------------------------
                     
-                    // 2. AI Dự báo (Xử lý trước khi upload để tiết kiệm băng thông nếu cần)
-                    var prediction = aiService.Predict(imageBytes);
-
-                    // 3. Upload ảnh (Logic mới: Ưu tiên Cloudinary, Fallback về Local)
-                    string fileName = $"{stream.CameraId}_{DateTime.UtcNow.Ticks}.jpg";
-                    string? imageUrl = await cloudService.UploadImageAsync(imageBytes, fileName);
-
-                    if (string.IsNullOrEmpty(imageUrl))
+                    // 2. XỬ LÝ ẢNH TRƯỚC KHI ĐƯA VÀO AI
+                    // Resize về 224x224, cắt bỏ timestamp và logo thừa
+                    var processedImageBytes = preProcessor.ProcessForAI(imageBytes);
+                    
+                    if (processedImageBytes == null)
                     {
-                        // Fallback: Lưu Local nếu Cloudinary lỗi hoặc chưa config
-                        string localPath = Path.Combine(_env.WebRootPath, "images", "rain_logs", fileName);
-                        Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
-                        await File.WriteAllBytesAsync(localPath, imageBytes, token);
-                        imageUrl = $"/images/rain_logs/{fileName}";
+                        _logger.LogWarning($"❌ Không thể xử lý ảnh từ camera {stream.CameraId}. Bỏ qua.");
+                        attempt.Status = nameof(AttemptStatus.Failed);
+                        attempt.ErrorMessage = "Image processing failed";
+                        db.IngestionAttempts.Add(attempt);
+                        await db.SaveChangesAsync(token);
+                        return;
+                    }
+                    
+                    // 3. AI Dự báo (Sử dụng ảnh đã xử lý để tăng độ chính xác)
+                    var prediction = aiService.Predict(processedImageBytes);
+                    bool isRainingNow = prediction.IsRaining;
+
+                    // 4. ⚡ TỐI ƯU LƯU TRỮ: CHỈ LƯU ẢNH KHI CÓ MƯA HOẶC CONFIDENCE THẤP
+                    // Tiết kiệm > 90% dung lượng Cloud/Local storage
+                    string? imageUrl = null;
+                    
+                    if (isRainingNow || prediction.Confidence < 0.6)
+                    {
+                        string fileName = $"{stream.CameraId}_{DateTime.UtcNow.Ticks}.jpg";
+                        imageUrl = await cloudService.UploadImageAsync(imageBytes, fileName); // Lưu ảnh GỐC đẹp, không phải ảnh đã resize
+
+                        if (string.IsNullOrEmpty(imageUrl))
+                        {
+                            // Fallback: Lưu Local nếu Cloudinary lỗi hoặc chưa config
+                            string localPath = Path.Combine(_env.WebRootPath, "images", "rain_logs", fileName);
+                            Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
+                            await File.WriteAllBytesAsync(localPath, imageBytes, token);
+                            imageUrl = $"/images/rain_logs/{fileName}";
+                        }
+                        
+                        _logger.LogInformation($"💾 Đã lưu ảnh: {fileName} (Mưa: {isRainingNow}, Confidence: {prediction.Confidence:P0})");
+                    }
+                    else
+                    {
+                        _logger.LogDebug($"⏭️ Bỏ qua lưu ảnh camera {stream.CameraId} (Không mưa, Confidence cao: {prediction.Confidence:P0})");
                     }
 
-                    // 4. LOGIC CHỐNG SPAM NÂNG CAO
+                    // 5. LOGIC CHỐNG SPAM NÂNG CAO
                     // Lấy log mưa gần nhất của camera này
                     var lastRainLog = await db.WeatherLogs
                         .Where(l => l.CameraId == stream.CameraId && l.IsRaining)
                         .OrderByDescending(l => l.Timestamp)
                         .FirstOrDefaultAsync(token);
-
-                    bool isRainingNow = prediction.IsRaining;
                     
                     // Chỉ gửi thông báo nếu:
                     // 1. Hiện tại đang mưa
@@ -284,16 +310,18 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         // Gửi cho Group Dashboard (tổng hợp)
                         await _hubContext.Clients.Group("Dashboard").SendAsync("ReceiveRainAlert", alertData, token);
                         
-                        // Gửi cho Group Quận cụ thể
+                        // GỬi cho Group Quận cụ thể (chuẩn hóa tên)
                         if (!string.IsNullOrEmpty(stream.Camera.Ward?.DistrictName))
                         {
-                            await _hubContext.Clients.Group(stream.Camera.Ward.DistrictName).SendAsync("ReceiveRainAlert", alertData, token);
+                            var normalizedDistrictName = NormalizeGroupName(stream.Camera.Ward.DistrictName);
+                            await _hubContext.Clients.Group(normalizedDistrictName).SendAsync("ReceiveRainAlert", alertData, token);
+                            _logger.LogDebug($"📡 Gửi SignalR tới group: {normalizedDistrictName}");
                         }
                         
                         _logger.LogInformation($"📡 Đã gửi SignalR alert cho camera {stream.Camera.Name}");
                     }
 
-                    // 5. Lưu Log Kết quả
+                    // 6. Lưu Log Kết quả
                     var weatherLog = new WeatherLog
                     {
                         CameraId = stream.CameraId,
@@ -340,6 +368,24 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             TimeZoneInfo vnTimeZone = TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
             DateTime vnTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, vnTimeZone);
             return vnTime.ToString("HH:mm dd/MM/yyyy");
+        }
+
+        /// <summary>
+        /// Chuẩn hóa tên Quận/Phường cho SignalR Group (loại bỏ dấu, khoảng trắng)
+        /// Ví dụ: "Quận 1" -> "quan_1", "Bình Thạnh" -> "binh_thanh"
+        /// </summary>
+        private string NormalizeGroupName(string? name)
+        {
+            if (string.IsNullOrEmpty(name)) return "unknown";
+            
+            return name
+                .ToLowerInvariant()
+                .Normalize(System.Text.NormalizationForm.FormD)
+                .Where(c => char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark)
+                .Aggregate(new System.Text.StringBuilder(), (sb, c) => sb.Append(c))
+                .ToString()
+                .Replace(" ", "_")
+                .Replace("-", "_");
         }
 
         private async Task SendNotificationsOptimizedAsync(

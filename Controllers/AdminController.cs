@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.DTOs;
+using HcmcRainVision.Backend.Models.Enums;
 
 namespace HcmcRainVision.Backend.Controllers
 {
@@ -38,7 +39,7 @@ namespace HcmcRainVision.Backend.Controllers
                 TotalWeatherLogs = totalLogs,
                 TotalUserReports = totalReports,
                 LastSystemScan = lastScan,
-                SystemStatus = "Running"
+                SystemStatus = nameof(JobStatus.Running)
             });
         }
 
@@ -168,90 +169,45 @@ namespace HcmcRainVision.Backend.Controllers
             });
         }
 
-        // 7. Kiểm tra health (sức khỏe) của tất cả camera URLs
+        // 7. ⚡ Kiểm tra health (sức khỏe) của tất cả camera (TỐI ƯU: Query từ DB thay vì crawl live)
+        // Worker đã kiểm tra định kỳ và lưu vào CameraStatusLogs -> API này chỉ cần đọc kết quả
         [HttpGet("stats/check-camera-health")]
         public async Task<IActionResult> CheckCameraHealth()
         {
+            // Lấy trạng thái từ DB (cực nhanh < 50ms) thay vì đi crawl lại (50s cho 50 cameras)
             var cameras = await _context.Cameras
                 .Include(c => c.Streams)
+                .Select(c => new 
+                {
+                    Id = c.Id,
+                    Name = c.Name,
+                    CurrentStatus = c.Status,
+                    // Lấy log trạng thái mới nhất từ Worker
+                    LastLog = _context.CameraStatusLogs
+                                .Where(l => l.CameraId == c.Id)
+                                .OrderByDescending(l => l.CheckedAt)
+                                .FirstOrDefault(),
+                    StreamUrl = c.Streams.FirstOrDefault(s => s.IsPrimary).StreamUrl
+                })
                 .ToListAsync();
-            var results = new List<object>();
-            
-            using var httpClient = new HttpClient();
-            
-            // Cấu hình Header giống như CameraCrawler để tránh bị block
-            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-            httpClient.DefaultRequestHeaders.Referrer = new Uri("http://giaothong.hochiminhcity.gov.vn/");
-            httpClient.Timeout = TimeSpan.FromSeconds(10);
 
-            foreach (var cam in cameras)
-            {
-                var primaryStream = cam.Streams.FirstOrDefault(s => s.IsPrimary);
-                if (primaryStream == null)
-                {
-                    results.Add(new {
-                        Id = cam.Id,
-                        Name = cam.Name,
-                        Status = "No Stream",
-                        StatusCode = 0,
-                        ResponseTime = 0
-                    });
-                    continue;
-                }
-                
-                // Bỏ qua camera test mode
-                if (primaryStream.StreamUrl == "TEST_MODE")
-                {
-                    results.Add(new {
-                        Id = cam.Id,
-                        Name = cam.Name,
-                        Status = "Test Mode",
-                        StatusCode = 0,
-                        ResponseTime = 0
-                    });
-                    continue;
-                }
+            var results = cameras.Select(c => new {
+                Id = c.Id,
+                Name = c.Name,
+                Status = c.CurrentStatus,
+                LastChecked = c.LastLog != null ? c.LastLog.CheckedAt : (DateTime?)null,
+                Reason = c.LastLog?.Reason,
+                StreamUrl = c.StreamUrl == "TEST_MODE" ? "Test Mode" : c.StreamUrl
+            }).ToList();
 
-                var startTime = DateTime.UtcNow;
-                try 
-                {
-                    var response = await httpClient.GetAsync(primaryStream.StreamUrl);
-                    var responseTime = (DateTime.UtcNow - startTime).TotalMilliseconds;
-                    
-                    // Kiểm tra content type
-                    var contentType = response.Content.Headers.ContentType?.MediaType;
-                    var isImage = contentType?.StartsWith("image/") ?? false;
-                    
-                    results.Add(new {
-                        Id = cam.Id,
-                        Name = cam.Name,
-                        Status = response.IsSuccessStatusCode && isImage ? "Online" : "Invalid Response",
-                        StatusCode = (int)response.StatusCode,
-                        ResponseTime = Math.Round(responseTime, 0),
-                        ContentType = contentType ?? "unknown"
-                    });
-                } 
-                catch (Exception ex)
-                {
-                    var responseTime = (DateTime.UtcNow - startTime).TotalMilliseconds;
-                    results.Add(new { 
-                        Id = cam.Id,
-                        Name = cam.Name,
-                        Status = "Error/Timeout",
-                        StatusCode = 0,
-                        ResponseTime = Math.Round(responseTime, 0),
-                        Error = ex.Message
-                    });
-                }
-            }
-            
             var summary = new {
                 TotalCameras = cameras.Count,
-                Online = results.Count(r => r.GetType().GetProperty("Status")?.GetValue(r)?.ToString() == "Online"),
-                Offline = results.Count(r => r.GetType().GetProperty("Status")?.GetValue(r)?.ToString() != "Online" && 
-                                             r.GetType().GetProperty("Status")?.GetValue(r)?.ToString() != "Test Mode"),
-                TestMode = results.Count(r => r.GetType().GetProperty("Status")?.GetValue(r)?.ToString() == "Test Mode"),
-                CheckedAt = DateTime.UtcNow
+                Active = results.Count(r => r.Status == nameof(CameraStatus.Active)),
+                Offline = results.Count(r => r.Status == nameof(CameraStatus.Offline)),
+                Maintenance = results.Count(r => r.Status == nameof(CameraStatus.Maintenance)),
+                TestMode = results.Count(r => r.StreamUrl == "Test Mode"),
+                CheckedAt = DateTime.UtcNow,
+                Note = "Data from background worker (updates every 5 minutes)"
             };
             
             return Ok(new { Summary = summary, Details = results });
@@ -292,8 +248,8 @@ namespace HcmcRainVision.Backend.Controllers
                         : (double?)null,
                     j.Notes,
                     TotalAttempts = j.Attempts.Count,
-                    SuccessfulAttempts = j.Attempts.Count(a => a.Status == "Success"),
-                    FailedAttempts = j.Attempts.Count(a => a.Status == "Failed"),
+                    SuccessfulAttempts = j.Attempts.Count(a => a.Status == nameof(AttemptStatus.Success)),
+                    FailedAttempts = j.Attempts.Count(a => a.Status == nameof(AttemptStatus.Failed)),
                     AvgLatency = j.Attempts.Any() 
                         ? j.Attempts.Average(a => a.LatencyMs) 
                         : 0
@@ -359,13 +315,13 @@ namespace HcmcRainVision.Backend.Controllers
                 .ToListAsync();
 
             var totalJobs = jobs.Count;
-            var completedJobs = jobs.Count(j => j.Status == "Completed");
-            var failedJobs = jobs.Count(j => j.Status == "Failed");
+            var completedJobs = jobs.Count(j => j.Status == nameof(JobStatus.Completed));
+            var failedJobs = jobs.Count(j => j.Status == nameof(JobStatus.Failed));
 
             var allAttempts = jobs.SelectMany(j => j.Attempts).ToList();
             var totalAttempts = allAttempts.Count;
-            var successfulAttempts = allAttempts.Count(a => a.Status == "Success");
-            var failedAttempts = allAttempts.Count(a => a.Status == "Failed");
+            var successfulAttempts = allAttempts.Count(a => a.Status == nameof(AttemptStatus.Success));
+            var failedAttempts = allAttempts.Count(a => a.Status == nameof(AttemptStatus.Failed));
 
             // Camera có tỷ lệ lỗi cao nhất
             var cameraFailureStats = allAttempts
@@ -374,13 +330,13 @@ namespace HcmcRainVision.Backend.Controllers
                 {
                     CameraId = g.Key,
                     TotalAttempts = g.Count(),
-                    FailedAttempts = g.Count(a => a.Status == "Failed"),
-                    FailureRate = g.Count() > 0 
-                        ? (double)g.Count(a => a.Status == "Failed") / g.Count() * 100 
+                    FailedAttempts = g.Count(a => a.Status == nameof(AttemptStatus.Failed)),
+                    ErrorRate = g.Count() > 0 
+                        ? (double)g.Count(a => a.Status == nameof(AttemptStatus.Failed)) / g.Count() * 100 
                         : 0,
                     AvgLatency = g.Average(a => a.LatencyMs)
                 })
-                .OrderByDescending(x => x.FailureRate)
+                .OrderByDescending(x => x.ErrorRate)
                 .Take(10)
                 .ToList();
 
