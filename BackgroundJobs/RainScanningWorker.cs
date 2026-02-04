@@ -41,8 +41,21 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             {
                 _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
 
-                // --- 1. DỌN DẸP ẢNH CŨ (Tự động xóa ảnh quá 7 ngày để không đầy ổ cứng) ---
-                await CleanupOldData(stoppingToken);
+                // --- 1. CHỐNG CHỒNG CHÉO (OVERLAP PROTECTION) ---
+                using (var scope = _serviceProvider.CreateScope())
+                {
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    var isJobRunning = await db.IngestionJobs
+                        .AnyAsync(j => j.Status == "Running" 
+                                  && j.StartedAt > DateTime.UtcNow.AddMinutes(-10), stoppingToken);
+
+                    if (isJobRunning)
+                    {
+                        _logger.LogWarning("⚠️ Job cũ chưa chạy xong. Bỏ qua lượt này.");
+                        await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                        continue;
+                    }
+                }
 
                 // --- 2. TẠO INGESTION JOB MỚI ---
                 Guid jobId = Guid.NewGuid();
@@ -96,7 +109,8 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                 using var scope = _serviceProvider.CreateScope();
                                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                                 
-                                var cam = stream.Camera;
+                                // Load lại Camera để có thể update status
+                                var cam = await dbContext.Cameras.FindAsync(new object[] { stream.CameraId }, token);
                                 if (cam == null) 
                                 {
                                     attemptStatus = "Failed";
@@ -119,6 +133,13 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                     attemptStatus = "Failed";
                                     errorMessage = "Failed to fetch image";
                                     
+                                    // Cập nhật trạng thái camera thành Offline
+                                    if (cam.Status != "Offline")
+                                    {
+                                        cam.Status = "Offline";
+                                        dbContext.Cameras.Update(cam);
+                                    }
+                                    
                                     // Ghi log trạng thái Offline
                                     dbContext.CameraStatusLogs.Add(new CameraStatusLog 
                                     { 
@@ -129,6 +150,13 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                     });
                                     await dbContext.SaveChangesAsync(token);
                                     return;
+                                }
+                                
+                                // Camera hoạt động bình thường - cập nhật status Active
+                                if (cam.Status != "Active")
+                                {
+                                    cam.Status = "Active";
+                                    dbContext.Cameras.Update(cam);
                                 }
                                 
                                 // Ghi log trạng thái Online
@@ -314,6 +342,9 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     catch { /* Ignore */ }
                 }
 
+                // --- 3. CLEANUP (DỌN DẸP DỮ LIỆU CŨ) ---
+                await CleanupOldDataAsync(stoppingToken);
+
                 // ⏰ TẦN SUẤT QUÉT: 5 phút (Có thể điều chỉnh)
                 // - Giảm xuống 2-3 phút để update nhanh hơn (khuyến nghị production)
                 // - Tăng lên 10 phút để tiết kiệm bandwidth (development)
@@ -323,7 +354,43 @@ namespace HcmcRainVision.Backend.BackgroundJobs
         }
 
         /// <summary>
-        /// Dọn dẹp dữ liệu cũ: Xóa cả file ảnh VÀ record trong Database
+        /// Dọn dẹp dữ liệu cũ (Logs, Jobs, Status)
+        /// Chỉ giữ dữ liệu trong 7 ngày để tránh database phình to
+        /// </summary>
+        private async Task CleanupOldDataAsync(CancellationToken token)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var threshold = DateTime.UtcNow.AddDays(-7);
+
+                // Xóa Ingestion Attempts cũ
+                await db.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM ingestion_attempts WHERE attempt_at < {0}", 
+                    threshold);
+
+                // Xóa Ingestion Jobs cũ
+                await db.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM ingestion_jobs WHERE started_at < {0}", 
+                    threshold);
+
+                // Xóa Camera Status Logs cũ
+                await db.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM camera_status_logs WHERE checked_at < {0}", 
+                    threshold);
+
+                _logger.LogInformation($"🧹 Đã dọn dẹp dữ liệu cũ hơn 7 ngày.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"⚠️ Lỗi khi dọn dẹp dữ liệu: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Dọn dẹp ảnh cũ và WeatherLog
+        /// Xóa cả file ảnh VÀ record trong Database
         /// Đảm bảo đồng bộ giữa filesystem và DB để tránh lỗi 404
         /// </summary>
         private async Task CleanupOldData(CancellationToken token)

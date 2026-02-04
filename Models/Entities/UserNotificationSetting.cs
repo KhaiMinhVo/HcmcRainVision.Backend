@@ -1,9 +1,13 @@
 namespace HcmcRainVision.Backend.Models.Entities
 {
     /// <summary>
-    /// Lưu trữ cài đặt thông báo cho người dùng
+    /// [OBSOLETE] Lưu trữ cài đặt thông báo cho người dùng
+    /// Đã được thay thế bởi bảng AlertSubscription để hỗ trợ tốt hơn:
+    /// - Đăng ký theo Ward (Phường/Xã) thay vì string Districts
+    /// - Hỗ trợ bán kính (Radius) và ngưỡng tin cậy (Threshold)
     /// Dùng để gửi Push Notification qua Firebase Cloud Messaging
     /// </summary>
+    [Obsolete("Sử dụng AlertSubscription thay thế. Bảng này chỉ giữ để migration.")]
     public class UserNotificationSetting
     {
         public int Id { get; set; }
