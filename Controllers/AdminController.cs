@@ -150,11 +150,12 @@ namespace HcmcRainVision.Backend.Controllers
 
             // Lấy camera KHÔNG có trong danh sách active
             var failedCameras = await _context.Cameras
+                .Include(c => c.Streams)
                 .Where(c => !activeCameraIds.Contains(c.Id))
                 .Select(c => new {
                     c.Id,
                     c.Name,
-                    c.SourceUrl,
+                    StreamUrl = c.Streams.FirstOrDefault(s => s.IsPrimary) != null ? c.Streams.FirstOrDefault(s => s.IsPrimary).StreamUrl : "N/A",
                     c.Latitude,
                     c.Longitude,
                     Status = "Offline - Không có dữ liệu mới"
@@ -171,7 +172,9 @@ namespace HcmcRainVision.Backend.Controllers
         [HttpGet("stats/check-camera-health")]
         public async Task<IActionResult> CheckCameraHealth()
         {
-            var cameras = await _context.Cameras.ToListAsync();
+            var cameras = await _context.Cameras
+                .Include(c => c.Streams)
+                .ToListAsync();
             var results = new List<object>();
             
             using var httpClient = new HttpClient();
@@ -183,8 +186,21 @@ namespace HcmcRainVision.Backend.Controllers
 
             foreach (var cam in cameras)
             {
+                var primaryStream = cam.Streams.FirstOrDefault(s => s.IsPrimary);
+                if (primaryStream == null)
+                {
+                    results.Add(new {
+                        Id = cam.Id,
+                        Name = cam.Name,
+                        Status = "No Stream",
+                        StatusCode = 0,
+                        ResponseTime = 0
+                    });
+                    continue;
+                }
+                
                 // Bỏ qua camera test mode
-                if (cam.SourceUrl == "TEST_MODE")
+                if (primaryStream.StreamUrl == "TEST_MODE")
                 {
                     results.Add(new {
                         Id = cam.Id,
@@ -199,7 +215,7 @@ namespace HcmcRainVision.Backend.Controllers
                 var startTime = DateTime.UtcNow;
                 try 
                 {
-                    var response = await httpClient.GetAsync(cam.SourceUrl);
+                    var response = await httpClient.GetAsync(primaryStream.StreamUrl);
                     var responseTime = (DateTime.UtcNow - startTime).TotalMilliseconds;
                     
                     // Kiểm tra content type

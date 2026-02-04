@@ -30,73 +30,88 @@ public static class TestDataSeeder
                 new Camera 
                 { 
                     Id = "CAM_Q1_001", 
-                    Name = "Ngã tư Lê Duẩn - Pasteur (Q1)", 
-                    // TODO: Thay bằng URL thật từ http://giaothong.hochiminhcity.gov.vn
-                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f707",
+                    Name = "Ngã tư Lê Duẩn - Pasteur (Q1)",
                     Latitude = 10.7797, 
-                    Longitude = 106.6990 
+                    Longitude = 106.6990,
+                    Status = "Active"
                 },
                 new Camera 
                 { 
                     Id = "CAM_Q1_002", 
-                    Name = "Vòng xoay Quách Thị Trang (Q1)", 
-                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f708",
+                    Name = "Vòng xoay Quách Thị Trang (Q1)",
                     Latitude = 10.7712, 
-                    Longitude = 106.6983 
+                    Longitude = 106.6983,
+                    Status = "Active"
                 },
                 new Camera 
                 { 
                     Id = "CAM_Q3_001", 
-                    Name = "Ngã tư CMT8 - Cách Mạng Tháng 8 (Q3)", 
-                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f709",
+                    Name = "Ngã tư CMT8 - Cách Mạng Tháng 8 (Q3)",
                     Latitude = 10.7785, 
-                    Longitude = 106.6897 
+                    Longitude = 106.6897,
+                    Status = "Active"
                 },
                 new Camera 
                 { 
                     Id = "CAM_Q5_001", 
-                    Name = "Chợ An Đông (Q5)", 
-                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70a",
+                    Name = "Chợ An Đông (Q5)",
                     Latitude = 10.7550, 
-                    Longitude = 106.6520 
+                    Longitude = 106.6520,
+                    Status = "Active"
                 },
                 new Camera 
                 { 
                     Id = "CAM_Q7_001", 
-                    Name = "Phú Mỹ Hưng (Q7)", 
-                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70b",
+                    Name = "Phú Mỹ Hưng (Q7)",
                     Latitude = 10.7290, 
-                    Longitude = 106.7200 
+                    Longitude = 106.7200,
+                    Status = "Active"
                 },
                 new Camera 
                 { 
                     Id = "CAM_BINHTAN_001", 
-                    Name = "Cầu Bình Triệu (Bình Tân)", 
-                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70c",
+                    Name = "Cầu Bình Triệu (Bình Tân)",
                     Latitude = 10.8000, 
-                    Longitude = 106.6300 
+                    Longitude = 106.6300,
+                    Status = "Active"
                 },
                 new Camera 
                 { 
                     Id = "CAM_TAN_BINH_001", 
-                    Name = "Sân bay Tân Sơn Nhất (Tân Bình)", 
-                    SourceUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70d",
+                    Name = "Sân bay Tân Sơn Nhất (Tân Bình)",
                     Latitude = 10.8185, 
-                    Longitude = 106.6595 
+                    Longitude = 106.6595,
+                    Status = "Active"
                 },
                 // Camera TEST MODE (fallback khi không có camera thật)
                 new Camera 
                 { 
                     Id = "CAM_TEST_01", 
-                    Name = "Camera Test Mode (Bến Thành)", 
-                    SourceUrl = "TEST_MODE", // Dùng ảnh giả lập
+                    Name = "Camera Test Mode (Bến Thành)",
                     Latitude = 10.762622, 
-                    Longitude = 106.660172 
+                    Longitude = 106.660172,
+                    Status = "Active"
                 }
             };
             await context.Cameras.AddRangeAsync(cameras);
             await context.SaveChangesAsync();
             Console.WriteLine($"✅ Đã thêm {cameras.Length} cameras.");
+            
+            // Tạo CameraStream cho mỗi camera
+            var streams = new[]
+            {
+                new CameraStream { CameraId = "CAM_Q1_001", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f707", StreamType = "Snapshot", IsPrimary = true, IsActive = true },
+                new CameraStream { CameraId = "CAM_Q1_002", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f708", StreamType = "Snapshot", IsPrimary = true, IsActive = true },
+                new CameraStream { CameraId = "CAM_Q3_001", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f709", StreamType = "Snapshot", IsPrimary = true, IsActive = true },
+                new CameraStream { CameraId = "CAM_Q5_001", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70a", StreamType = "Snapshot", IsPrimary = true, IsActive = true },
+                new CameraStream { CameraId = "CAM_Q7_001", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70b", StreamType = "Snapshot", IsPrimary = true, IsActive = true },
+                new CameraStream { CameraId = "CAM_BINHTAN_001", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70c", StreamType = "Snapshot", IsPrimary = true, IsActive = true },
+                new CameraStream { CameraId = "CAM_TAN_BINH_001", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70d", StreamType = "Snapshot", IsPrimary = true, IsActive = true },
+                new CameraStream { CameraId = "CAM_TEST_01", StreamUrl = "TEST_MODE", StreamType = "Test", IsPrimary = true, IsActive = true }
+            };
+            await context.CameraStreams.AddRangeAsync(streams);
+            await context.SaveChangesAsync();
+            Console.WriteLine($"✅ Đã thêm {streams.Length} camera streams.");
         }
 
         // 2. Seed WeatherLogs (Nếu chưa có)
@@ -190,39 +205,6 @@ public static class TestDataSeeder
             await context.SaveChangesAsync();
             Console.WriteLine($"✅ Đã thêm {wards.Length} wards.");
         }
-
-        // --- 5. MIGRATE CAMERA.SOURCEURL → CAMERASTREAM (MỚI) ---
-        // Logic: Copy SourceUrl từ Camera sang bảng CameraStream
-        // Chỉ chạy khi CameraStream trống và có Cameras
-        if (!context.CameraStreams.Any() && context.Cameras.Any())
-        {
-            Console.WriteLine("🔄 Đang migrate Camera.SourceUrl → CameraStream...");
-            var cameras = await context.Cameras.ToListAsync();
-            var streams = new List<CameraStream>();
-            
-            foreach (var cam in cameras)
-            {
-                if (!string.IsNullOrEmpty(cam.SourceUrl))
-                {
-                    streams.Add(new CameraStream
-                    {
-                        CameraId = cam.Id,
-                        StreamUrl = cam.SourceUrl,
-                        StreamType = cam.SourceUrl.Contains("TEST_MODE") ? "Test" : "Snapshot",
-                        IsPrimary = true,
-                        IsActive = true,
-                        CreatedAt = DateTime.UtcNow
-                    });
-                }
-            }
-            
-            if (streams.Count > 0)
-            {
-                await context.CameraStreams.AddRangeAsync(streams);
-                await context.SaveChangesAsync();
-                Console.WriteLine($"✅ Đã migrate {streams.Count} camera streams.");
-            }
-        }
     }
 
     /// <summary>
@@ -245,36 +227,7 @@ public static class TestDataSeeder
             await context.SaveChangesAsync();
         }
 
-        // 2. Chuyển Camera.SourceUrl -> CameraStream (nếu chưa có streams)
-        var camerasWithoutStreams = await context.Cameras
-            .Include(c => c.Streams)
-            .Where(c => !c.Streams.Any() && !string.IsNullOrEmpty(c.SourceUrl))
-            .ToListAsync();
-
-        if (camerasWithoutStreams.Any())
-        {
-            Console.WriteLine($"🔄 Migrate {camerasWithoutStreams.Count} cameras SourceUrl -> CameraStream...");
-            
-            foreach (var cam in camerasWithoutStreams)
-            {
-#pragma warning disable CS0618 // Type or member is obsolete
-                context.CameraStreams.Add(new CameraStream
-                {
-                    CameraId = cam.Id,
-                    StreamUrl = cam.SourceUrl,
-                    StreamType = cam.SourceUrl.Contains("TEST_MODE") ? "Test" : "Snapshot",
-                    IsPrimary = true,
-                    IsActive = true,
-                    CreatedAt = DateTime.UtcNow
-                });
-#pragma warning restore CS0618
-            }
-            
-            await context.SaveChangesAsync();
-            Console.WriteLine("✅ Migration hoàn tất.");
-        }
-
-        // 3. Gán Ward mặc định cho các Camera chưa có WardId
+        // 2. Gán Ward mặc định cho các Camera chưa có WardId
         var camerasWithoutWard = await context.Cameras
             .Where(c => c.WardId == null)
             .ToListAsync();

@@ -23,11 +23,5 @@ namespace HcmcRainVision.Backend.Models.Entities
 
         public string Status { get; set; } = "Active";
 
-        // --- CÁC TRƯỜNG CŨ (TẠM GIỮ ĐỂ MIGRATE, SẼ XÓA SAU) ---
-        [Obsolete("Use CameraStream.StreamUrl instead")]
-        public string SourceUrl { get; set; } = null!; 
-        
-        [Obsolete("No longer needed with AlertSubscription system")]
-        public DateTime? LastRainAlertSent { get; set; }
     }
 }

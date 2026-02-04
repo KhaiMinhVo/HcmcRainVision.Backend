@@ -2,7 +2,9 @@ using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.Entities;
 using HcmcRainVision.Backend.Services.AI;
 using HcmcRainVision.Backend.Services.Crawling;
+using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.Notification;
+using HcmcRainVision.Backend.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace HcmcRainVision.Backend.BackgroundJobs
@@ -13,8 +15,8 @@ namespace HcmcRainVision.Backend.BackgroundJobs
         private readonly ILogger<RainScanningWorker> _logger;
         private readonly IWebHostEnvironment _env;
 
-        // Cờ chống chồng chéo (Locking)
-        private static bool _isJobRunning = false;
+        // Thay bool bằng SemaphoreSlim để lock an toàn hơn
+        private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
 
         public RainScanningWorker(IServiceProvider serviceProvider, ILogger<RainScanningWorker> logger, IWebHostEnvironment env)
         {
@@ -36,14 +38,14 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             {
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var stuckJobs = await db.IngestionJobs
-                    .Where(j => j.Status == "Running")
+                    .Where(j => j.Status == nameof(JobStatus.Running))
                     .ToListAsync();
 
                 if (stuckJobs.Any())
                 {
                     foreach (var job in stuckJobs)
                     {
-                        job.Status = "Failed";
+                        job.Status = nameof(JobStatus.Failed);
                         job.Notes = "System restart/crash while running";
                         job.EndedAt = DateTime.UtcNow;
                     }
@@ -59,15 +61,14 @@ namespace HcmcRainVision.Backend.BackgroundJobs
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                // 1. CƠ CHẾ CHỐNG CHỒNG CHÉO (OVERLAP PROTECTION)
-                if (_isJobRunning)
+                // Thử wait lock trong 0ms (kiểm tra xem có ai đang chạy không)
+                if (!await _lock.WaitAsync(0))
                 {
-                    _logger.LogWarning("⚠️ Job cũ chưa chạy xong. Bỏ qua lượt quét này để bảo vệ server.");
+                    _logger.LogWarning("⚠️ Job cũ chưa chạy xong. Bỏ qua lượt này.");
                     await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
                     continue;
                 }
 
-                _isJobRunning = true; // Khóa Job
                 Guid jobId = Guid.NewGuid();
 
                 try
@@ -75,12 +76,9 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     using (var scope = _serviceProvider.CreateScope())
                     {
                         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                        var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
-                        var aiService = scope.ServiceProvider.GetRequiredService<RainPredictionService>();
-                        var firebaseService = scope.ServiceProvider.GetRequiredService<IFirebasePushService>();
 
                         // Tạo Job Log
-                        var job = new IngestionJob { JobId = jobId, JobType = "Scheduled", Status = "Running", StartedAt = DateTime.UtcNow };
+                        var job = new IngestionJob { JobId = jobId, JobType = "Scheduled", Status = nameof(JobStatus.Running), StartedAt = DateTime.UtcNow };
                         db.IngestionJobs.Add(job);
                         await db.SaveChangesAsync();
 
@@ -88,7 +86,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         var streams = await db.CameraStreams
                             .Include(s => s.Camera)
                                 .ThenInclude(c => c.Ward)
-                            .Where(s => s.IsActive && s.Camera.Status != "Maintenance")
+                            .Where(s => s.IsActive && s.Camera.Status != nameof(CameraStatus.Maintenance))
                             .ToListAsync(stoppingToken);
 
                         _logger.LogInformation($"Đã tải {streams.Count} CameraStream cần quét.");
@@ -102,7 +100,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         });
 
                         // Kết thúc Job
-                        job.Status = "Completed";
+                        job.Status = nameof(JobStatus.Completed);
                         job.EndedAt = DateTime.UtcNow;
                         job.Notes = $"Processed {streams.Count} streams";
                         await db.SaveChangesAsync();
@@ -122,7 +120,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                 }
                 finally
                 {
-                    _isJobRunning = false; // Mở khóa
+                    _lock.Release(); // Giải phóng lock
                 }
 
                 // Chờ 5 phút
@@ -137,6 +135,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
             var aiService = scope.ServiceProvider.GetRequiredService<RainPredictionService>();
             var firebaseService = scope.ServiceProvider.GetRequiredService<IFirebasePushService>();
+            var cloudService = scope.ServiceProvider.GetRequiredService<ICloudStorageService>();
 
             var attempt = new IngestionAttempt { AttemptId = Guid.NewGuid(), JobId = jobId, CameraId = stream.CameraId, AttemptAt = DateTime.UtcNow };
             var attemptStartTime = DateTime.UtcNow;
@@ -149,7 +148,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                 
                 if (imageBytes == null)
                 {
-                    attempt.Status = "Failed";
+                    attempt.Status = nameof(AttemptStatus.Failed);
                     attempt.ErrorMessage = "Connection Timeout";
                     attempt.LatencyMs = (int)latencyMs;
                     
@@ -157,7 +156,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     var statusLog = new CameraStatusLog
                     {
                         CameraId = stream.CameraId,
-                        Status = "Offline",
+                        Status = nameof(CameraStatus.Offline),
                         CheckedAt = DateTime.UtcNow,
                         Reason = "Connection Timeout"
                     };
@@ -167,26 +166,32 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     var camera = await db.Cameras.FindAsync(new object[] { stream.CameraId }, token);
                     if (camera != null)
                     {
-                        camera.Status = "Offline";
+                        camera.Status = nameof(CameraStatus.Offline);
                     }
                 }
                 else
                 {
-                    attempt.Status = "Success";
+                    attempt.Status = nameof(AttemptStatus.Success);
                     attempt.HttpStatus = 200;
                     attempt.LatencyMs = (int)latencyMs;
                     
-                    // Lưu ảnh (Tạm thời lưu disk)
-                    string fileName = $"{stream.CameraId}_{DateTime.UtcNow.Ticks}.jpg";
-                    string savePath = Path.Combine(_env.WebRootPath, "images", "rain_logs", fileName);
-                    Directory.CreateDirectory(Path.GetDirectoryName(savePath)!);
-                    await File.WriteAllBytesAsync(savePath, imageBytes, token);
-                    string imageUrl = $"/images/rain_logs/{fileName}";
-
-                    // 2. AI Dự báo
+                    // 2. AI Dự báo (Xử lý trước khi upload để tiết kiệm băng thông nếu cần)
                     var prediction = aiService.Predict(imageBytes);
 
-                    // 3. Logic Chống Spam Thông Báo (QUAN TRỌNG)
+                    // 3. Upload ảnh (Logic mới: Ưu tiên Cloudinary, Fallback về Local)
+                    string fileName = $"{stream.CameraId}_{DateTime.UtcNow.Ticks}.jpg";
+                    string? imageUrl = await cloudService.UploadImageAsync(imageBytes, fileName);
+
+                    if (string.IsNullOrEmpty(imageUrl))
+                    {
+                        // Fallback: Lưu Local nếu Cloudinary lỗi hoặc chưa config
+                        string localPath = Path.Combine(_env.WebRootPath, "images", "rain_logs", fileName);
+                        Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
+                        await File.WriteAllBytesAsync(localPath, imageBytes, token);
+                        imageUrl = $"/images/rain_logs/{fileName}";
+                    }
+
+                    // 4. Logic Chống Spam Thông Báo (QUAN TRỌNG)
                     // Lấy log gần nhất của camera này để so sánh
                     var lastLog = await db.WeatherLogs
                         .Where(l => l.CameraId == stream.CameraId)
@@ -202,15 +207,16 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         await SendNotificationsAsync(stream, prediction.Confidence, db, firebaseService);
                     }
 
-                    // 4. Lưu Log Kết quả
+                    // 5. Lưu Log Kết quả
                     var weatherLog = new WeatherLog
                     {
                         CameraId = stream.CameraId,
                         IsRaining = isRainingNow,
                         Confidence = prediction.Confidence,
-                        ImageUrl = imageUrl,
+                        ImageUrl = imageUrl, // Dùng URL từ Cloudinary hoặc Local
                         Timestamp = DateTime.UtcNow,
-                        Location = NetTopologySuite.Geometries.Point.Empty
+                        // Lưu ý: Gán Location từ Camera vào WeatherLog
+                        Location = new NetTopologySuite.Geometries.Point(stream.Camera.Longitude, stream.Camera.Latitude) { SRID = 4326 }
                     };
                     db.WeatherLogs.Add(weatherLog);
                     
@@ -218,7 +224,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     var statusLog = new CameraStatusLog
                     {
                         CameraId = stream.CameraId,
-                        Status = "Online",
+                        Status = nameof(CameraStatus.Active),
                         CheckedAt = DateTime.UtcNow
                     };
                     db.CameraStatusLogs.Add(statusLog);
@@ -227,13 +233,13 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     var camera = await db.Cameras.FindAsync(new object[] { stream.CameraId }, token);
                     if (camera != null)
                     {
-                        camera.Status = "Active";
+                        camera.Status = nameof(CameraStatus.Active);
                     }
                 }
             }
             catch (Exception ex)
             {
-                attempt.Status = "Error";
+                attempt.Status = nameof(AttemptStatus.Error);
                 attempt.ErrorMessage = ex.Message;
                 _logger.LogError(ex, $"Lỗi xử lý Camera {stream.CameraId}");
             }

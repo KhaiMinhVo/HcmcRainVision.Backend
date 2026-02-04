@@ -81,12 +81,14 @@ namespace HcmcRainVision.Backend.Services.Crawling
                     retryCount++;
                     if (retryCount >= maxRetries) 
                     {
-                        _logger.LogError($"❌ Bỏ cuộc sau 3 lần thử camera {url}: {ex.Message}");
+                        _logger.LogError($"❌ Bỏ cuộc sau {maxRetries} lần thử camera {url}: {ex.Message}");
                         return null; // Trả về null để Worker biết mà bỏ qua
                     }
                     
-                    _logger.LogWarning($"⚠️ Lỗi lần {retryCount} khi crawl {url}: {ex.Message}. Thử lại sau 1 giây...");
-                    await Task.Delay(1000); // Chờ 1 giây rồi thử lại
+                    // Exponential backoff: 2^retryCount (1s, 2s, 4s)
+                    int delaySeconds = (int)Math.Pow(2, retryCount);
+                    _logger.LogWarning($"⚠️ Lỗi lần {retryCount} khi crawl {url}: {ex.Message}. Thử lại sau {delaySeconds}s...");
+                    await Task.Delay(delaySeconds * 1000);
                 }
             }
             

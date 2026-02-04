@@ -14,7 +14,6 @@ namespace HcmcRainVision.Backend.Data
         public DbSet<UserReport> UserReports { get; set; }
         public DbSet<User> Users { get; set; }
         public DbSet<FavoriteCamera> FavoriteCameras { get; set; }
-        public DbSet<UserNotificationSetting> UserNotificationSettings { get; set; }
         
         // Bảng mới (Chỉ có Ward, bỏ District)
         public DbSet<Ward> Wards { get; set; } 
