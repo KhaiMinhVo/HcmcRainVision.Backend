@@ -5,6 +5,7 @@ using System.Text;
 using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.DTOs;
 using HcmcRainVision.Backend.Models.Entities;
+using HcmcRainVision.Backend.Models.Constants;
 using HcmcRainVision.Backend.Services.Notification;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -47,7 +48,7 @@ namespace HcmcRainVision.Backend.Controllers
                 Username = request.Username,
                 Email = request.Email,
                 PasswordHash = passwordHash,
-                Role = "User"
+                Role = AppConstants.UserRoles.User
             };
 
             _context.Users.Add(user);

@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using HcmcRainVision.Backend.Models.Constants;
 
 namespace HcmcRainVision.Backend.Models.Entities
 {
@@ -17,7 +18,7 @@ namespace HcmcRainVision.Backend.Models.Entities
         [Required]
         public string PasswordHash { get; set; } = string.Empty; // Lưu mật khẩu đã mã hóa
 
-        public string Role { get; set; } = "User"; // Phân quyền: "User" hoặc "Admin"
+        public string Role { get; set; } = AppConstants.UserRoles.User; // Phân quyền
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

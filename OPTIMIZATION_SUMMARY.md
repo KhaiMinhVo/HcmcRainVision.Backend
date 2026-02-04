@@ -17,8 +17,8 @@
 ```csharp
 // Only save images when:
 // 1. Rain detected (isRainingNow == true)
-// 2. OR AI confidence is low (< 0.6) - uncertain predictions
-if (isRainingNow || prediction.Confidence < 0.6)
+// 2. OR AI confidence is low (< threshold) - uncertain predictions
+if (isRainingNow || prediction.Confidence < AppConstants.AiPrediction.LowConfidenceThreshold)
 {
     imageUrl = await cloudService.UploadImageAsync(imageBytes, fileName);
     // Fallback to local storage if cloud fails

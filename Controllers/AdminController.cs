@@ -4,10 +4,11 @@ using Microsoft.EntityFrameworkCore;
 using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.DTOs;
 using HcmcRainVision.Backend.Models.Enums;
+using HcmcRainVision.Backend.Models.Constants;
 
 namespace HcmcRainVision.Backend.Controllers
 {
-    [Authorize(Roles = "Admin")] // Chỉ Admin mới vào được
+    [Authorize(Roles = AppConstants.UserRoles.Admin)] // Chỉ Admin mới vào được
     [Route("api/[controller]")]
     [ApiController]
     public class AdminController : ControllerBase

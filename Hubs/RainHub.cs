@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.SignalR;
+using HcmcRainVision.Backend.Models.Constants;
+using HcmcRainVision.Backend.Utils;
 
 namespace HcmcRainVision.Backend.Hubs
 {
@@ -28,20 +30,23 @@ namespace HcmcRainVision.Backend.Hubs
 
         /// <summary>
         /// Client gọi hàm này để tham gia nhóm theo Quận/District
+        /// Client có thể gửi "Quận 1", Server tự chuẩn hóa thành "quan_1"
         /// </summary>
         public async Task JoinDistrictGroup(string districtName)
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, districtName);
-            _logger.LogInformation($"Client {Context.ConnectionId} joined district group: {districtName}");
+            var normalizedName = StringUtils.NormalizeCode(districtName);
+            await Groups.AddToGroupAsync(Context.ConnectionId, normalizedName);
+            _logger.LogInformation($"Client {Context.ConnectionId} joined district group: {normalizedName} (from: {districtName})");
         }
 
         /// <summary>
-        /// Client gọi hàm này để rời khỏi nhóm Quận/District
+        /// Client rời khỏi nhóm District
         /// </summary>
         public async Task LeaveDistrictGroup(string districtName)
         {
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, districtName);
-            _logger.LogInformation($"Client {Context.ConnectionId} left district group: {districtName}");
+            var normalizedName = StringUtils.NormalizeCode(districtName);
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, normalizedName);
+            _logger.LogInformation($"Client {Context.ConnectionId} left district group: {normalizedName}");
         }
 
         /// <summary>
@@ -49,7 +54,7 @@ namespace HcmcRainVision.Backend.Hubs
         /// </summary>
         public async Task JoinDashboard()
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, "Dashboard");
+            await Groups.AddToGroupAsync(Context.ConnectionId, AppConstants.SignalRGroups.Dashboard);
             _logger.LogInformation($"Client {Context.ConnectionId} joined Dashboard group");
         }
 

@@ -5,6 +5,8 @@ using HcmcRainVision.Backend.Services.Crawling;
 using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.Notification;
 using HcmcRainVision.Backend.Models.Enums;
+using HcmcRainVision.Backend.Models.Constants;
+using HcmcRainVision.Backend.Utils;
 using HcmcRainVision.Backend.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -256,7 +258,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     // Tiết kiệm > 90% dung lượng Cloud/Local storage
                     string? imageUrl = null;
                     
-                    if (isRainingNow || prediction.Confidence < 0.6)
+                    if (isRainingNow || prediction.Confidence < AppConstants.AiPrediction.LowConfidenceThreshold)
                     {
                         string fileName = $"{stream.CameraId}_{DateTime.UtcNow.Ticks}.jpg";
                         imageUrl = await cloudService.UploadImageAsync(imageBytes, fileName); // Lưu ảnh GỐC đẹp, không phải ảnh đã resize
@@ -286,9 +288,9 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     
                     // Chỉ gửi thông báo nếu:
                     // 1. Hiện tại đang mưa
-                    // 2. VÀ (Chưa từng mưa HOẶC Lần mưa cuối cách đây hơn 30 phút) -> Cooldown 30p
+                    // 2. VÀ (Chưa từng mưa HOẶC Lần mưa cuối cách đây hơn cooldown time) -> Tránh spam
                     bool shouldNotify = isRainingNow && 
-                                        (lastRainLog == null || (DateTime.UtcNow - lastRainLog.Timestamp).TotalMinutes > 30);
+                                        (lastRainLog == null || (DateTime.UtcNow - lastRainLog.Timestamp).TotalMinutes > AppConstants.Timing.RainAlertCooldownMinutes);
 
                     if (shouldNotify)
                     {
@@ -308,13 +310,15 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         };
 
                         // Gửi cho Group Dashboard (tổng hợp)
-                        await _hubContext.Clients.Group("Dashboard").SendAsync("ReceiveRainAlert", alertData, token);
+                        await _hubContext.Clients.Group(AppConstants.SignalRGroups.Dashboard)
+                            .SendAsync(AppConstants.SignalRGroups.ReceiveRainAlertMethod, alertData, token);
                         
-                        // GỬi cho Group Quận cụ thể (chuẩn hóa tên)
+                        // Gửi cho Group Quận cụ thể (chuẩn hóa tên)
                         if (!string.IsNullOrEmpty(stream.Camera.Ward?.DistrictName))
                         {
-                            var normalizedDistrictName = NormalizeGroupName(stream.Camera.Ward.DistrictName);
-                            await _hubContext.Clients.Group(normalizedDistrictName).SendAsync("ReceiveRainAlert", alertData, token);
+                            var normalizedDistrictName = StringUtils.NormalizeCode(stream.Camera.Ward.DistrictName);
+                            await _hubContext.Clients.Group(normalizedDistrictName)
+                                .SendAsync(AppConstants.SignalRGroups.ReceiveRainAlertMethod, alertData, token);
                             _logger.LogDebug($"📡 Gửi SignalR tới group: {normalizedDistrictName}");
                         }
                         
@@ -370,24 +374,6 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             return vnTime.ToString("HH:mm dd/MM/yyyy");
         }
 
-        /// <summary>
-        /// Chuẩn hóa tên Quận/Phường cho SignalR Group (loại bỏ dấu, khoảng trắng)
-        /// Ví dụ: "Quận 1" -> "quan_1", "Bình Thạnh" -> "binh_thanh"
-        /// </summary>
-        private string NormalizeGroupName(string? name)
-        {
-            if (string.IsNullOrEmpty(name)) return "unknown";
-            
-            return name
-                .ToLowerInvariant()
-                .Normalize(System.Text.NormalizationForm.FormD)
-                .Where(c => char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark)
-                .Aggregate(new System.Text.StringBuilder(), (sb, c) => sb.Append(c))
-                .ToString()
-                .Replace(" ", "_")
-                .Replace("-", "_");
-        }
-
         private async Task SendNotificationsOptimizedAsync(
             CameraStream stream, 
             float confidence, 
@@ -397,31 +383,41 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             if (stream.Camera.WardId == null || !subsByWard.ContainsKey(stream.Camera.WardId)) return;
 
             var subscriptions = subsByWard[stream.Camera.WardId];
-            string timeStr = DateTime.UtcNow.AddHours(7).ToString("HH:mm"); // Giờ VN cứng
+            string timeStr = DateTime.UtcNow.AddHours(7).ToString("HH:mm"); // Giờ VN
 
-            foreach (var sub in subscriptions)
+            // 1. Lọc ra danh sách Token cần gửi (đạt ngưỡng confidence và có device token)
+            var validTokens = subscriptions
+                .Where(s => confidence >= s.ThresholdProbability && !string.IsNullOrEmpty(s.User.DeviceToken))
+                .Select(s => s.User.DeviceToken!)
+                .Distinct() // Tránh gửi trùng nếu 1 user đăng ký 2 lần
+                .ToList();
+
+            if (validTokens.Any())
             {
-                // Kiểm tra ngưỡng tin cậy tại bộ nhớ
-                if (confidence >= sub.ThresholdProbability && !string.IsNullOrEmpty(sub.User.DeviceToken))
+                // 2. Gửi Batch (Fire and forget - không chặn worker thread)
+                _ = Task.Run(async () =>
                 {
-                    // Fire and forget - không chặn luồng chính
-                    _ = Task.Run(async () =>
+                    try
                     {
-                        try
-                        {
-                            await firebase.SendToDeviceAsync(
-                                sub.User.DeviceToken, 
-                                "Cảnh báo mưa! 🌧️", 
-                                $"Mưa tại {stream.Camera.Name} lúc {timeStr}"
-                            );
-                            _logger.LogInformation($"📱 Đã gửi push notification cho {sub.User.Email}");
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, $"Lỗi gửi push notification cho {sub.User.Email}");
-                        }
-                    });
-                }
+                        int sentCount = await firebase.SendMulticastAsync(
+                            validTokens,
+                            "Cảnh báo mưa! 🌧️",
+                            $"Mưa tại {stream.Camera.Name} lúc {timeStr}",
+                            new Dictionary<string, string>
+                            {
+                                { "cameraId", stream.CameraId },
+                                { "cameraName", stream.Camera.Name },
+                                { "confidence", confidence.ToString("F2") },
+                                { "timestamp", DateTime.UtcNow.ToString("o") }
+                            }
+                        );
+                        _logger.LogInformation($"📱 Đã gửi push notification hàng loạt: {sentCount}/{validTokens.Count} thành công");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"❌ Lỗi gửi batch push notifications");
+                    }
+                });
             }
         }
 

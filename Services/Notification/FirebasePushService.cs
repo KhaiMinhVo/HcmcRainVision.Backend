@@ -1,6 +1,7 @@
 using FirebaseAdmin;
 using FirebaseAdmin.Messaging;
 using Google.Apis.Auth.OAuth2;
+using HcmcRainVision.Backend.Models.Constants;
 using FcmNotification = FirebaseAdmin.Messaging.Notification; // Alias để tránh xung đột namespace
 
 namespace HcmcRainVision.Backend.Services.Notification
@@ -9,6 +10,7 @@ namespace HcmcRainVision.Backend.Services.Notification
     {
         Task<bool> SendRainAlertAsync(string cameraName, string cameraId, double confidence);
         Task<bool> SendToDeviceAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null);
+        Task<int> SendMulticastAsync(List<string> deviceTokens, string title, string body, Dictionary<string, string>? data = null);
     }
 
     /// <summary>
@@ -74,7 +76,7 @@ namespace HcmcRainVision.Backend.Services.Notification
                         { "confidence", confidence.ToString() },
                         { "type", "rain_alert" }
                     },
-                    Topic = "rain_alerts" // Gửi cho tất cả user đã subscribe topic này
+                    Topic = AppConstants.Topics.RainAlerts // Gửi cho tất cả user đã subscribe topic này
                 };
 
                 string response = await FirebaseMessaging.DefaultInstance.SendAsync(message);
@@ -114,6 +116,65 @@ namespace HcmcRainVision.Backend.Services.Notification
                 _logger.LogError(ex, $"❌ Lỗi gửi notification đến device: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Gửi notification hàng loạt đến nhiều devices (Batch sending)
+        /// Firebase hỗ trợ tối đa 500 tokens mỗi lần gửi
+        /// </summary>
+        /// <param name="deviceTokens">Danh sách device tokens</param>
+        /// <param name="title">Tiêu đề notification</param>
+        /// <param name="body">Nội dung notification</param>
+        /// <param name="data">Dữ liệu tùy chỉnh (optional)</param>
+        /// <returns>Số lượng gửi thành công</returns>
+        public async Task<int> SendMulticastAsync(List<string> deviceTokens, string title, string body, Dictionary<string, string>? data = null)
+        {
+            if (!_isEnabled || deviceTokens == null || !deviceTokens.Any())
+            {
+                _logger.LogWarning("⚠️ Firebase không được kích hoạt hoặc không có device tokens");
+                return 0;
+            }
+
+            // Firebase cho phép tối đa 500 tokens mỗi lần gửi
+            var batches = deviceTokens.Chunk(500);
+            int successCount = 0;
+
+            foreach (var batch in batches)
+            {
+                var message = new MulticastMessage()
+                {
+                    Tokens = batch.ToList(),
+                    Notification = new FcmNotification()
+                    {
+                        Title = title,
+                        Body = body
+                    },
+                    Data = data ?? new Dictionary<string, string>()
+                };
+
+                try
+                {
+                    var response = await FirebaseMessaging.DefaultInstance.SendEachForMulticastAsync(message);
+                    successCount += response.SuccessCount;
+
+                    // Log các token bị lỗi để xử lý sau (có thể xóa khỏi DB nếu token hết hạn)
+                    if (response.FailureCount > 0)
+                    {
+                        _logger.LogWarning($"⚠️ {response.FailureCount}/{batch.Count()} tokens gửi thất bại trong batch này");
+                        
+                        // TODO: Xử lý các token lỗi - response.Responses[i].IsSuccess == false
+                        // Nên xóa khỏi DB các token không còn hợp lệ
+                    }
+
+                    _logger.LogInformation($"✅ Multicast: {response.SuccessCount}/{batch.Count()} thành công");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"❌ Lỗi gửi Multicast Firebase: {ex.Message}");
+                }
+            }
+
+            return successCount;
         }
     }
 }

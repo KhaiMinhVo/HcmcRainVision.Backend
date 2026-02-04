@@ -1,6 +1,7 @@
 using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.Entities;
 using HcmcRainVision.Backend.Models.Enums;
+using HcmcRainVision.Backend.Models.Constants;
 using NetTopologySuite.Geometries;
 using Microsoft.EntityFrameworkCore;
 
@@ -168,7 +169,7 @@ public static class TestDataSeeder
 
         // --- 3. SEED USER ADMIN (MỚI) ---
         // Kiểm tra xem đã có admin chưa, nếu chưa thì tạo
-        if (!context.Users.Any(u => u.Role == "Admin"))
+        if (!context.Users.Any(u => u.Role == AppConstants.UserRoles.Admin))
         {
             Console.WriteLine("👤 Đang tạo tài khoản Admin mặc định...");
             
@@ -181,7 +182,7 @@ public static class TestDataSeeder
                 Username = "admin",
                 Email = "admin@hcmcrain.com",
                 PasswordHash = passwordHash,
-                Role = "Admin", // Quyền cao nhất
+                Role = AppConstants.UserRoles.Admin, // Quyền cao nhất
                 CreatedAt = DateTime.UtcNow
             };
 

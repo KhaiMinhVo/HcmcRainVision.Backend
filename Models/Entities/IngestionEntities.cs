@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using HcmcRainVision.Backend.Models.Enums;
+using HcmcRainVision.Backend.Models.Constants;
 
 namespace HcmcRainVision.Backend.Models.Entities
 {
@@ -9,7 +10,7 @@ namespace HcmcRainVision.Backend.Models.Entities
     {
         [Key]
         public Guid JobId { get; set; } = Guid.NewGuid();
-        public string JobType { get; set; } = "RainScan";
+        public string JobType { get; set; } = AppConstants.JobTypes.RainScan;
         public string Status { get; set; } = nameof(JobStatus.Running);
         public DateTime StartedAt { get; set; } = DateTime.UtcNow;
         public DateTime? EndedAt { get; set; }
