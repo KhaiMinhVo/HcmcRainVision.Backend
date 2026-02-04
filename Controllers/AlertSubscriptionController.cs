@@ -147,8 +147,16 @@ namespace HcmcRainVision.Backend.Controllers
             var identity = HttpContext.User.Identity as ClaimsIdentity;
             if (identity != null)
             {
-                var idClaim = identity.FindFirst("id"); // Hoặc ClaimTypes.NameIdentifier tùy config Auth
+                // Thử tìm claim với ClaimTypes.NameIdentifier (claim mặc định cho UserId)
+                var idClaim = identity.FindFirst(ClaimTypes.NameIdentifier);
                 if (idClaim != null && int.TryParse(idClaim.Value, out int userId))
+                {
+                    return userId;
+                }
+                
+                // Fallback: thử tìm claim "id"
+                idClaim = identity.FindFirst("id");
+                if (idClaim != null && int.TryParse(idClaim.Value, out userId))
                 {
                     return userId;
                 }

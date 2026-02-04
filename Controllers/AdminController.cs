@@ -59,12 +59,16 @@ namespace HcmcRainVision.Backend.Controllers
             foreach (var report in reports)
             {
                 // Tìm log của AI trong khoảng +- 5 phút so với lúc user báo cáo (dùng UTC)
-                var relevantLog = await _context.WeatherLogs
+                var logsInRange = await _context.WeatherLogs
                     .Where(w => w.CameraId == report.CameraId 
                                 && w.Timestamp >= report.Timestamp.AddMinutes(-5)
                                 && w.Timestamp <= report.Timestamp.AddMinutes(5))
-                    .OrderBy(w => Math.Abs((w.Timestamp - report.Timestamp).Ticks)) // Lấy log gần nhất
-                    .FirstOrDefaultAsync();
+                    .ToListAsync();
+                
+                // Sort trong memory vì Math.Abs không dịch được sang SQL
+                var relevantLog = logsInRange
+                    .OrderBy(w => Math.Abs((w.Timestamp - report.Timestamp).Ticks))
+                    .FirstOrDefault();
 
                 if (relevantLog != null)
                 {
