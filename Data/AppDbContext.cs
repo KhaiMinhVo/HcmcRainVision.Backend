@@ -39,6 +39,24 @@ namespace HcmcRainVision.Backend.Data
                 .HasForeignKey(c => c.WardId)
                 .OnDelete(DeleteBehavior.SetNull);
 
+            // =========================================================================
+            // 🚀 TỐI ƯU DATABASE INDEX
+            // =========================================================================
+            // Index cho query lấy log mới nhất theo thời gian
+            modelBuilder.Entity<WeatherLog>()
+                .HasIndex(x => x.Timestamp)
+                .HasDatabaseName("ix_weather_logs_timestamp");
+
+            // Index tổng hợp cho query theo camera và thời gian (composite index)
+            modelBuilder.Entity<WeatherLog>()
+                .HasIndex(x => new { x.CameraId, x.Timestamp })
+                .HasDatabaseName("ix_weather_logs_camera_timestamp");
+
+            // Index cho IngestionAttempt query performance
+            modelBuilder.Entity<IngestionAttempt>()
+                .HasIndex(x => x.AttemptAt)
+                .HasDatabaseName("ix_ingestion_attempts_attempt_at");
+
             base.OnModelCreating(modelBuilder);
 
             // =========================================================================

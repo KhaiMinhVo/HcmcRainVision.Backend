@@ -52,16 +52,20 @@ builder.Services.AddSingleton<ICloudStorageService, CloudStorageService>();
 // 4. Đăng ký Background Worker (Chạy ngầm)
 builder.Services.AddHostedService<RainScanningWorker>();
 
-// 5. Đăng ký AI Service với PredictionEnginePool (Thread-safe)
-// Nếu có file RainAnalysisModel.zip, pool sẽ được sử dụng
-// Nếu không, service sẽ fallback sang Mock mode
+// 5. Đăng ký AI Service với Strategy Pattern (Interface-based)
 var modelPath = Path.Combine(builder.Environment.ContentRootPath, "RainAnalysisModel.zip");
 if (File.Exists(modelPath))
 {
+    // Có AI Model: Dùng ML.NET
     builder.Services.AddPredictionEnginePool<ModelInput, ModelOutput>()
         .FromFile(modelName: "RainModel", filePath: modelPath, watchForChanges: true);
+    builder.Services.AddSingleton<IRainPredictionService, MlRainPredictionService>();
 }
-builder.Services.AddSingleton<RainPredictionService>();
+else
+{
+    // Không có Model: Dùng Mock Service cho development
+    builder.Services.AddSingleton<IRainPredictionService, MockRainPredictionService>();
+}
 
 // 6. Đăng ký Email Service
 builder.Services.AddTransient<IEmailService, EmailService>();

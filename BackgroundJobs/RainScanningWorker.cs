@@ -8,6 +8,7 @@ using HcmcRainVision.Backend.Models.Enums;
 using HcmcRainVision.Backend.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
 
 namespace HcmcRainVision.Backend.BackgroundJobs
 {
@@ -155,7 +156,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             using var scope = services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
-            var aiService = scope.ServiceProvider.GetRequiredService<RainPredictionService>();
+            var aiService = scope.ServiceProvider.GetRequiredService<IRainPredictionService>();
             var firebaseService = scope.ServiceProvider.GetRequiredService<IFirebasePushService>();
             var cloudService = scope.ServiceProvider.GetRequiredService<ICloudStorageService>();
 
@@ -196,6 +197,41 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     attempt.Status = nameof(AttemptStatus.Success);
                     attempt.HttpStatus = 200;
                     attempt.LatencyMs = (int)latencyMs;
+                    
+                    // --- HASH CHECK: Phát hiện camera bị treo (ảnh giống hệt lần trước) ---
+                    using var md5 = MD5.Create();
+                    var hashBytes = md5.ComputeHash(imageBytes);
+                    var currentHash = Convert.ToHexString(hashBytes);
+
+                    // Lấy thông tin camera để check hash cũ
+                    var currentCamera = await db.Cameras.FindAsync(new object[] { stream.CameraId }, token);
+                    
+                    if (currentCamera != null && currentCamera.LastImageHash == currentHash)
+                    {
+                        _logger.LogWarning($"📷 Camera {stream.CameraId} ({stream.Camera.Name}) bị treo - ảnh giống hệt lần trước. Bỏ qua xử lý AI.");
+                        
+                        // Log stuck camera status
+                        var stuckLog = new CameraStatusLog
+                        {
+                            CameraId = stream.CameraId,
+                            Status = "Stuck",
+                            CheckedAt = DateTime.UtcNow,
+                            Reason = "Duplicate image hash detected"
+                        };
+                        db.CameraStatusLogs.Add(stuckLog);
+                        attempt.ErrorMessage = "Stuck camera - duplicate image";
+                        
+                        db.IngestionAttempts.Add(attempt);
+                        await db.SaveChangesAsync(token);
+                        return; // Dừng xử lý camera này
+                    }
+
+                    // Cập nhật hash mới (EF Core change tracking sẽ tự update)
+                    if (currentCamera != null)
+                    {
+                        currentCamera.LastImageHash = currentHash;
+                    }
+                    // ----------------------------------------------------------------
                     
                     // 2. AI Dự báo (Xử lý trước khi upload để tiết kiệm băng thông nếu cần)
                     var prediction = aiService.Predict(imageBytes);

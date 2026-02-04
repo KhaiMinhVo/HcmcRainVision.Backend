@@ -1,67 +1,32 @@
 using Microsoft.ML;
 using Microsoft.Extensions.ML;
-using System.IO;
 
 namespace HcmcRainVision.Backend.Services.AI
 {
-    public class RainPredictionService
+    /// <summary>
+    /// Service dự đoán mưa sử dụng ML.NET với PredictionEnginePool (thread-safe)
+    /// </summary>
+    public class MlRainPredictionService : IRainPredictionService
     {
-        private readonly PredictionEnginePool<ModelInput, ModelOutput>? _predictionEnginePool;
-        private readonly ILogger<RainPredictionService> _logger;
-        private readonly bool _isMockMode;
+        private readonly PredictionEnginePool<ModelInput, ModelOutput> _predictionEnginePool;
+        private readonly ILogger<MlRainPredictionService> _logger;
 
-        public RainPredictionService(
-            ILogger<RainPredictionService> logger,
-            IWebHostEnvironment env)
-        {
-            _logger = logger;
-            
-            // Kiểm tra xem có file model không
-            var modelPath = Path.Combine(env.ContentRootPath, "RainAnalysisModel.zip");
-            _isMockMode = !File.Exists(modelPath);
-
-            if (_isMockMode)
-            {
-                _logger.LogWarning("⚠️ Không tìm thấy file RainAnalysisModel.zip. Đang chạy chế độ GIẢ LẬP (Mock Mode).");
-            }
-            else
-            {
-                _logger.LogInformation("✅ Phát hiện Model AI, sẵn sàng sử dụng PredictionEnginePool.");
-            }
-        }
-
-        // Constructor overload để inject PredictionEnginePool (khi có model)
-        public RainPredictionService(
+        public MlRainPredictionService(
             PredictionEnginePool<ModelInput, ModelOutput> predictionEnginePool,
-            ILogger<RainPredictionService> logger)
+            ILogger<MlRainPredictionService> logger)
         {
             _predictionEnginePool = predictionEnginePool;
             _logger = logger;
-            _isMockMode = false;
+            _logger.LogInformation("✅ MlRainPredictionService khởi tạo với AI Model");
         }
 
         public RainPredictionResult Predict(byte[] imageBytes)
         {
-            // --- TRƯỜNG HỢP 1: CHƯA CÓ MODEL (Giả lập) ---
-            if (_isMockMode || _predictionEnginePool == null)
-            {
-                // Random kết quả để test giao diện
-                var random = new Random();
-                bool isRain = random.NextDouble() > 0.5; // 50/50
-                return new RainPredictionResult
-                {
-                    IsRaining = isRain,
-                    Confidence = (float)(0.7 + random.NextDouble() * 0.2), // Random từ 70% - 90%
-                    Message = "[MOCK] Dữ liệu giả lập"
-                };
-            }
-
-            // --- TRƯỜNG HỢP 2: ĐÃ CÓ MODEL (Dự đoán thật với PredictionEnginePool - Thread-safe) ---
             try
             {
                 var input = new ModelInput { Image = imageBytes };
                 
-                // Không cần lock, Pool tự xử lý thread-safe
+                // PredictionEnginePool tự xử lý thread-safe
                 var result = _predictionEnginePool.Predict(input);
 
                 // Giả sử nhãn của bạn là "Rain" và "NoRain"
@@ -74,13 +39,18 @@ namespace HcmcRainVision.Backend.Services.AI
                 {
                     IsRaining = isRaining,
                     Confidence = maxScore,
-                    Message = "AI Prediction (Pool)"
+                    Message = "AI Prediction"
                 };
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Lỗi khi dự đoán: {ex.Message}");
-                return new RainPredictionResult { IsRaining = false, Confidence = 0, Message = "Error" };
+                _logger.LogError(ex, "Lỗi khi dự đoán với AI Model");
+                return new RainPredictionResult 
+                { 
+                    IsRaining = false, 
+                    Confidence = 0, 
+                    Message = "Error" 
+                };
             }
         }
     }
