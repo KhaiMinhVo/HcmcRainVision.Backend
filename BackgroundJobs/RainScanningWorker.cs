@@ -5,6 +5,8 @@ using HcmcRainVision.Backend.Services.Crawling;
 using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.Notification;
 using HcmcRainVision.Backend.Models.Enums;
+using HcmcRainVision.Backend.Hubs;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
 namespace HcmcRainVision.Backend.BackgroundJobs
@@ -14,16 +16,19 @@ namespace HcmcRainVision.Backend.BackgroundJobs
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<RainScanningWorker> _logger;
         private readonly IWebHostEnvironment _env;
+        private readonly IHubContext<RainHub> _hubContext;
 
         // Thay bool bằng SemaphoreSlim để lock an toàn hơn
         private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
+        
+        // Biến để theo dõi lần chạy cleanup cuối cùng
+        private DateTime _lastCleanupTime = DateTime.MinValue;
 
-        public RainScanningWorker(IServiceProvider serviceProvider, ILogger<RainScanningWorker> logger, IWebHostEnvironment env)
+        public RainScanningWorker(IServiceProvider serviceProvider, ILogger<RainScanningWorker> logger, IWebHostEnvironment env, IHubContext<RainHub> hubContext)
         {
             _serviceProvider = serviceProvider;
             _logger = logger;
-            _env = env;
-        }
+            _env = env;            _hubContext = hubContext;        }
 
         public override async Task StartAsync(CancellationToken cancellationToken)
         {
@@ -107,11 +112,14 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         
                         _logger.LogInformation($"✅ Hoàn thành Job #{jobId}");
                         
-                        // Dọn dẹp ảnh cũ
-                        await CleanupOldImagesAsync();
-                        
-                        // Dọn dẹp logs cũ
-                        await CleanupOldDataAsync(db, stoppingToken);
+                        // SỬA LỖI HIỆU NĂNG: Chỉ Cleanup 1 lần mỗi ngày
+                        if (DateTime.UtcNow.Day != _lastCleanupTime.Day)
+                        {
+                            await CleanupOldImagesAsync();
+                            await CleanupOldDataAsync(db, stoppingToken);
+                            _lastCleanupTime = DateTime.UtcNow;
+                            _logger.LogInformation("🧹 Đã chạy cleanup hàng ngày.");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -191,20 +199,37 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         imageUrl = $"/images/rain_logs/{fileName}";
                     }
 
-                    // 4. Logic Chống Spam Thông Báo (QUAN TRỌNG)
-                    // Lấy log gần nhất của camera này để so sánh
-                    var lastLog = await db.WeatherLogs
-                        .Where(l => l.CameraId == stream.CameraId)
+                    // 4. LOGIC CHỐNG SPAM NÂNG CAO
+                    // Lấy log mưa gần nhất của camera này
+                    var lastRainLog = await db.WeatherLogs
+                        .Where(l => l.CameraId == stream.CameraId && l.IsRaining)
                         .OrderByDescending(l => l.Timestamp)
                         .FirstOrDefaultAsync(token);
 
                     bool isRainingNow = prediction.IsRaining;
-                    bool wasRainingBefore = lastLog?.IsRaining ?? false;
+                    
+                    // Chỉ gửi thông báo nếu:
+                    // 1. Hiện tại đang mưa
+                    // 2. VÀ (Chưa từng mưa HOẶC Lần mưa cuối cách đây hơn 30 phút) -> Cooldown 30p
+                    bool shouldNotify = isRainingNow && 
+                                        (lastRainLog == null || (DateTime.UtcNow - lastRainLog.Timestamp).TotalMinutes > 30);
 
-                    // Chỉ gửi thông báo nếu: Hiện tại Mưa VÀ (Trước đó không mưa HOẶC Lần đầu tiên chạy)
-                    if (isRainingNow && !wasRainingBefore)
+                    if (shouldNotify)
                     {
+                        // Gửi Firebase Push Notification
                         await SendNotificationsAsync(stream, prediction.Confidence, db, firebaseService);
+                        
+                        // GỬI SIGNALR (REAL-TIME CHO WEB)
+                        await _hubContext.Clients.All.SendAsync("ReceiveRainAlert", new 
+                        {
+                            CameraId = stream.CameraId,
+                            CameraName = stream.Camera.Name,
+                            ImageUrl = imageUrl,
+                            Confidence = prediction.Confidence,
+                            Timestamp = DateTime.UtcNow
+                        }, token);
+                        
+                        _logger.LogInformation($"📡 Đã gửi SignalR alert cho camera {stream.Camera.Name}");
                     }
 
                     // 5. Lưu Log Kết quả

@@ -32,7 +32,16 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString, o => o.UseNetTopologySuite())); // Quan trọng: Kích hoạt GIS
 
-// 2. Đăng ký HttpClient Factory
+// 2. Đăng ký HttpClient Factory với Polly Resilience
+builder.Services.AddHttpClient("CameraClient", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    client.DefaultRequestHeaders.Referrer = new Uri("http://giaothong.hochiminhcity.gov.vn/");
+})
+.AddStandardResilienceHandler(); // Tự động retry, circuit breaker, timeout chuẩn Microsoft
+
+// 2.1. Đăng ký HttpClient mặc định cho các service khác
 builder.Services.AddHttpClient();
 
 // 3. Đăng ký các Service (Dependency Injection)
@@ -82,6 +91,10 @@ builder.Services.AddSwaggerGen();
 // 8. Đăng ký SignalR
 builder.Services.AddSignalR();
 
+// 8.1. Đăng ký Health Checks
+builder.Services.AddHealthChecks()
+    .AddNpgSql(connectionString!); // Check kết nối DB
+
 // 9. Cấu hình CORS (Để React gọi được API + SignalR)
 builder.Services.AddCors(options =>
 {
@@ -120,5 +133,8 @@ app.MapControllers();
 
 // Đăng ký SignalR Hub endpoint
 app.MapHub<RainHub>("/rainHub");
+
+// Đăng ký Health Check endpoint
+app.MapHealthChecks("/health");
 
 app.Run();

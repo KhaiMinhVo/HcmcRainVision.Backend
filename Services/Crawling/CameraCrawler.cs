@@ -38,61 +38,34 @@ namespace HcmcRainVision.Backend.Services.Crawling
                 return await GetFakeImageAsync(); 
             }
 
-            // 2. Tạo Client từ Factory
-            var client = _httpClientFactory.CreateClient();
-            
-            // 3. Cấu hình Headers để "lừa" máy chủ camera
-            var randomAgent = _userAgents[new Random().Next(_userAgents.Length)];
-            client.DefaultRequestHeaders.UserAgent.ParseAdd(randomAgent);
-            
-            // Quan trọng: Nhiều camera HCMC yêu cầu Referer từ trang chủ của họ mới cho tải ảnh
-            client.DefaultRequestHeaders.Referrer = new Uri("http://giaothong.hochiminhcity.gov.vn/"); 
-            client.Timeout = TimeSpan.FromSeconds(10); // Đừng chờ quá 10s
+            // 2. Tạo Named Client từ Factory (Polly sẽ tự động retry)
+            var client = _httpClientFactory.CreateClient("CameraClient");
 
-            // 4. Retry Policy: Thử lại tối đa 3 lần nếu bị lỗi mạng
-            int retryCount = 0;
-            int maxRetries = 3;
-            while (retryCount < maxRetries)
+            try 
             {
-                try 
-                {
-                    _logger.LogInformation($"Đang tải ảnh từ: {url} (Lần thử: {retryCount + 1})");
-                    
-                    // Timeout ngắn (5 giây) để tránh treo job lâu
-                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                    var response = await client.GetAsync(url, cts.Token);
-                    
-                    // Nếu lỗi (404, 403...) ném ra exception
-                    response.EnsureSuccessStatusCode();
+                _logger.LogInformation($"Đang tải ảnh từ: {url}");
+                
+                var response = await client.GetAsync(url);
+                
+                // Nếu lỗi (404, 403...) ném ra exception
+                response.EnsureSuccessStatusCode();
 
-                    // Kiểm tra xem có đúng là ảnh không (Content-Type)
-                    var mediaType = response.Content.Headers.ContentType?.MediaType;
-                    if (mediaType != "image/jpeg" && mediaType != "image/png")
-                    {
-                        _logger.LogWarning($"URL không trả về ảnh! Nhận được: {mediaType}");
-                        return null; // Hoặc throw exception tùy bạn
-                    }
-
-                    // Đọc dữ liệu ảnh thành mảng byte (để chuyển cho AI xử lý)
-                    return await response.Content.ReadAsByteArrayAsync();
-                }
-                catch (Exception ex)
+                // Kiểm tra xem có đúng là ảnh không (Content-Type)
+                var mediaType = response.Content.Headers.ContentType?.MediaType;
+                if (mediaType != "image/jpeg" && mediaType != "image/png")
                 {
-                    retryCount++;
-                    if (retryCount >= maxRetries) 
-                    {
-                        _logger.LogError($"❌ Bỏ cuộc sau {maxRetries} lần thử camera {url}: {ex.Message}");
-                        return null; // Trả về null để Worker biết mà bỏ qua
-                    }
-                    
-                    // Exponential backoff: 2^retryCount (1s, 2s, 4s)
-                    int delaySeconds = (int)Math.Pow(2, retryCount);
-                    _logger.LogWarning($"⚠️ Lỗi lần {retryCount} khi crawl {url}: {ex.Message}. Thử lại sau {delaySeconds}s...");
-                    await Task.Delay(delaySeconds * 1000);
+                    _logger.LogWarning($"URL không trả về ảnh! Nhận được: {mediaType}");
+                    return null;
                 }
+
+                // Đọc dữ liệu ảnh thành mảng byte (để chuyển cho AI xử lý)
+                return await response.Content.ReadAsByteArrayAsync();
             }
-            
-            return null;
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ Lỗi khi crawl camera {url}: {ex.Message}");
+                return null; // Trả về null để Worker biết mà bỏ qua
+            }
         }
 
         // Hàm giả lập ảnh (Load 1 ảnh có sẵn trong thư mục dự án)
