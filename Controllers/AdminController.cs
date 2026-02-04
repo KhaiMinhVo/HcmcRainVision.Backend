@@ -198,7 +198,7 @@ namespace HcmcRainVision.Backend.Controllers
                 Status = c.CurrentStatus,
                 LastChecked = c.LastLog != null ? c.LastLog.CheckedAt : (DateTime?)null,
                 Reason = c.LastLog?.Reason,
-                StreamUrl = c.StreamUrl == "TEST_MODE" ? "Test Mode" : c.StreamUrl
+                StreamUrl = c.StreamUrl == AppConstants.Camera.TestModeUrl ? "Test Mode" : c.StreamUrl
             }).ToList();
 
             var summary = new {

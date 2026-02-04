@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using HcmcRainVision.Backend.Models.Constants;
 
 namespace HcmcRainVision.Backend.Services.Crawling
 {
@@ -33,7 +34,7 @@ namespace HcmcRainVision.Backend.Services.Crawling
         public async Task<byte[]?> FetchImageAsync(string url)
         {
             // 1. Chế độ giả lập (Dành cho lúc test hoặc API thật bị sập)
-            if (url.StartsWith("TEST_MODE"))
+            if (url.StartsWith(AppConstants.Camera.TestModeUrl))
             {
                 return await GetFakeImageAsync(); 
             }

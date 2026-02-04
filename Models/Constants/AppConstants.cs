@@ -77,5 +77,16 @@ namespace HcmcRainVision.Backend.Models.Constants
             /// </summary>
             public const string RainAlerts = "rain_alerts";
         }
+        
+        /// <summary>
+        /// Cấu hình và hằng số liên quan đến Camera
+        /// </summary>
+        public static class Camera
+        {
+            /// <summary>
+            /// URL đặc biệt để bật chế độ Test Mode (dùng ảnh giả lập)
+            /// </summary>
+            public const string TestModeUrl = "TEST_MODE";
+        }
     }
 }

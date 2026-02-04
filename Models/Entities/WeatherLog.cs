@@ -10,8 +10,11 @@ namespace HcmcRainVision.Backend.Models.Entities
 
         public string? CameraId { get; set; } // Ví dụ: "CAM_Q1_001"
 
-        // Đây là kiểu dữ liệu đặc biệt của PostGIS
-        // Nó lưu trữ kinh độ/vĩ độ chuẩn xác
+        /// <summary>
+        /// DENORMALIZATION: Vị trí được lưu sẵn trong Log (trùng với Camera.Latitude/Longitude)
+        /// Lý do giữ lại: Tối ưu hiệu năng query GIS (không cần JOIN Camera)
+        /// Lợi ích: Nếu dời camera, các Log cũ vẫn giữ vị trí cũ (đúng cho lịch sử)
+        /// </summary>
         public Point? Location { get; set; } 
 
         public bool IsRaining { get; set; } // Kết quả từ AI

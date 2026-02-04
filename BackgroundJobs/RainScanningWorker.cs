@@ -90,20 +90,24 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         db.IngestionJobs.Add(job);
                         await db.SaveChangesAsync();
 
-                        // Lấy danh sách Stream đang Active
+                        // Lấy danh sách Stream đang Active (CHỈ LẤY PRIMARY để tránh xử lý trùng)
                         var streams = await db.CameraStreams
                             .Include(s => s.Camera)
                                 .ThenInclude(c => c.Ward)
-                            .Where(s => s.IsActive && s.Camera.Status != nameof(CameraStatus.Maintenance))
+                            .Where(s => s.IsActive 
+                                     && s.IsPrimary  // CHỈ lấy luồng chính, bỏ qua backup stream
+                                     && s.Camera.Status != nameof(CameraStatus.Maintenance))
                             .ToListAsync(stoppingToken);
 
                         _logger.LogInformation($"Đã tải {streams.Count} CameraStream cần quét.");
 
                         // TỐI ƯU N+1: Load tất cả subscriptions RA NGOÀI vòng lặp
+                        // TODO: Hiện tại chỉ hỗ trợ theo Ward. Nếu muốn hỗ trợ bán kính (CenterPoint/RadiusMeters),
+                        // cần thêm Spatial Query để kiểm tra khoảng cách giữa Camera và CenterPoint
                         var activeSubscriptions = await db.AlertSubscriptions
                             .Include(s => s.User)
                             .Include(s => s.Ward)
-                            .Where(s => s.IsEnabled && s.WardId != null)
+                            .Where(s => s.IsEnabled && s.WardId != null)  // Hiện tại chỉ lấy theo Ward
                             .ToListAsync(stoppingToken);
 
                         // Gom nhóm theo WardId để tra cứu nhanh O(1)
@@ -201,9 +205,25 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     attempt.HttpStatus = 200;
                     attempt.LatencyMs = (int)latencyMs;
                     
-                    // --- HASH CHECK: Phát hiện camera bị treo (ảnh giống hệt lần trước) ---
+                    // 2. XỬ LÝ ẢNH TRƯỚC KHI ĐƯA VÀO AI
+                    // Resize về 224x224, cắt bỏ timestamp và logo thừa
+                    var processedImageBytes = preProcessor.ProcessForAI(imageBytes);
+                    
+                    if (processedImageBytes == null)
+                    {
+                        _logger.LogWarning($"❌ Không thể xử lý ảnh từ camera {stream.CameraId}. Bỏ qua.");
+                        attempt.Status = nameof(AttemptStatus.Failed);
+                        attempt.ErrorMessage = "Image processing failed";
+                        db.IngestionAttempts.Add(attempt);
+                        await db.SaveChangesAsync(token);
+                        return;
+                    }
+                    
+                    // --- ⚠️ HASH CHECK: Phát hiện camera bị treo (SỬA ĐỔI: Hash ảnh ĐÃ XỬ LÝ) ---
+                    // Lý do: Ảnh gốc có timestamp thay đổi liên tục -> Hash sẽ khác nhau dù nội dung giống nhau
+                    // => Phải hash ảnh SAU KHI đã crop timestamp/logo
                     using var md5 = MD5.Create();
-                    var hashBytes = md5.ComputeHash(imageBytes);
+                    var hashBytes = md5.ComputeHash(processedImageBytes);  // Hash ảnh đã xử lý (không còn timestamp)
                     var currentHash = Convert.ToHexString(hashBytes);
 
                     // Lấy thông tin camera để check hash cũ
@@ -219,7 +239,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                             CameraId = stream.CameraId,
                             Status = "Stuck", // TODO: Thêm CameraStatus.Stuck vào enum
                             CheckedAt = DateTime.UtcNow,
-                            Reason = "Duplicate image hash detected"
+                            Reason = "Duplicate image hash detected (after preprocessing)"
                         };
                         db.CameraStatusLogs.Add(stuckLog);
                         attempt.ErrorMessage = "Stuck camera - duplicate image";
@@ -235,20 +255,6 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         currentCamera.LastImageHash = currentHash;
                     }
                     // ----------------------------------------------------------------
-                    
-                    // 2. XỬ LÝ ẢNH TRƯỚC KHI ĐƯA VÀO AI
-                    // Resize về 224x224, cắt bỏ timestamp và logo thừa
-                    var processedImageBytes = preProcessor.ProcessForAI(imageBytes);
-                    
-                    if (processedImageBytes == null)
-                    {
-                        _logger.LogWarning($"❌ Không thể xử lý ảnh từ camera {stream.CameraId}. Bỏ qua.");
-                        attempt.Status = nameof(AttemptStatus.Failed);
-                        attempt.ErrorMessage = "Image processing failed";
-                        db.IngestionAttempts.Add(attempt);
-                        await db.SaveChangesAsync(token);
-                        return;
-                    }
                     
                     // 3. AI Dự báo (Sử dụng ảnh đã xử lý để tăng độ chính xác)
                     var prediction = aiService.Predict(processedImageBytes);

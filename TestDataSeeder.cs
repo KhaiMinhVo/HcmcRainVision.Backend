@@ -109,7 +109,7 @@ public static class TestDataSeeder
                 new CameraStream { CameraId = "CAM_Q7_001", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70b", StreamType = "Snapshot", IsPrimary = true, IsActive = true },
                 new CameraStream { CameraId = "CAM_BINHTAN_001", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70c", StreamType = "Snapshot", IsPrimary = true, IsActive = true },
                 new CameraStream { CameraId = "CAM_TAN_BINH_001", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=5896ddb359f14b001221f70d", StreamType = "Snapshot", IsPrimary = true, IsActive = true },
-                new CameraStream { CameraId = "CAM_TEST_01", StreamUrl = "TEST_MODE", StreamType = "Test", IsPrimary = true, IsActive = true }
+                new CameraStream { CameraId = "CAM_TEST_01", StreamUrl = AppConstants.Camera.TestModeUrl, StreamType = "Test", IsPrimary = true, IsActive = true }
             };
             await context.CameraStreams.AddRangeAsync(streams);
             await context.SaveChangesAsync();
