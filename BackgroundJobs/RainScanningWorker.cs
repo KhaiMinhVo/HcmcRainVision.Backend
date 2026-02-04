@@ -96,12 +96,26 @@ namespace HcmcRainVision.Backend.BackgroundJobs
 
                         _logger.LogInformation($"Đã tải {streams.Count} CameraStream cần quét.");
 
+                        // TỐI ƯU N+1: Load tất cả subscriptions RA NGOÀI vòng lặp
+                        var activeSubscriptions = await db.AlertSubscriptions
+                            .Include(s => s.User)
+                            .Include(s => s.Ward)
+                            .Where(s => s.IsEnabled && s.WardId != null)
+                            .ToListAsync(stoppingToken);
+
+                        // Gom nhóm theo WardId để tra cứu nhanh O(1)
+                        var subsByWard = activeSubscriptions
+                            .GroupBy(s => s.WardId!)
+                            .ToDictionary(g => g.Key, g => g.ToList());
+
+                        _logger.LogInformation($"Đã tải {activeSubscriptions.Count} subscriptions từ {subsByWard.Count} phường.");
+
                         // Xử lý song song (Max 5 camera cùng lúc)
                         var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = stoppingToken };
 
                         await Parallel.ForEachAsync(streams, parallelOptions, async (stream, token) =>
                         {
-                            await ProcessCameraAsync(stream, jobId, scope.ServiceProvider, token);
+                            await ProcessCameraAsync(stream, jobId, scope.ServiceProvider, subsByWard, token);
                         });
 
                         // Kết thúc Job
@@ -136,7 +150,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             }
         }
 
-        private async Task ProcessCameraAsync(CameraStream stream, Guid jobId, IServiceProvider services, CancellationToken token)
+        private async Task ProcessCameraAsync(CameraStream stream, Guid jobId, IServiceProvider services, Dictionary<string, List<AlertSubscription>> subsByWard, CancellationToken token)
         {
             using var scope = services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -216,18 +230,29 @@ namespace HcmcRainVision.Backend.BackgroundJobs
 
                     if (shouldNotify)
                     {
-                        // Gửi Firebase Push Notification
-                        await SendNotificationsAsync(stream, prediction.Confidence, db, firebaseService);
+                        // Gửi Firebase Push Notification (tối ưu với Dictionary)
+                        await SendNotificationsOptimizedAsync(stream, prediction.Confidence, subsByWard, firebaseService);
                         
-                        // GỬI SIGNALR (REAL-TIME CHO WEB)
-                        await _hubContext.Clients.All.SendAsync("ReceiveRainAlert", new 
+                        // GỬI SIGNALR (REAL-TIME CHO WEB) - Gửi theo Group Quận
+                        var alertData = new 
                         {
                             CameraId = stream.CameraId,
                             CameraName = stream.Camera.Name,
+                            WardName = stream.Camera.Ward?.WardName,
+                            DistrictName = stream.Camera.Ward?.DistrictName,
                             ImageUrl = imageUrl,
                             Confidence = prediction.Confidence,
                             Timestamp = DateTime.UtcNow
-                        }, token);
+                        };
+
+                        // Gửi cho Group Dashboard (tổng hợp)
+                        await _hubContext.Clients.Group("Dashboard").SendAsync("ReceiveRainAlert", alertData, token);
+                        
+                        // Gửi cho Group Quận cụ thể
+                        if (!string.IsNullOrEmpty(stream.Camera.Ward?.DistrictName))
+                        {
+                            await _hubContext.Clients.Group(stream.Camera.Ward.DistrictName).SendAsync("ReceiveRainAlert", alertData, token);
+                        }
                         
                         _logger.LogInformation($"📡 Đã gửi SignalR alert cho camera {stream.Camera.Name}");
                     }
@@ -281,37 +306,39 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             return vnTime.ToString("HH:mm dd/MM/yyyy");
         }
 
-        private async Task SendNotificationsAsync(CameraStream stream, float confidence, AppDbContext db, IFirebasePushService firebase)
+        private async Task SendNotificationsOptimizedAsync(
+            CameraStream stream, 
+            float confidence, 
+            Dictionary<string, List<AlertSubscription>> subsByWard,
+            IFirebasePushService firebase)
         {
-            if (stream.Camera.WardId == null) return;
+            if (stream.Camera.WardId == null || !subsByWard.ContainsKey(stream.Camera.WardId)) return;
 
-            // Tìm những user đăng ký phường này với độ tin cậy thấp hơn hoặc bằng kết quả AI
-            var subscriptions = await db.AlertSubscriptions
-                .Include(s => s.User)
-                .Include(s => s.Ward)
-                .Where(s => s.IsEnabled && s.WardId == stream.Camera.WardId && confidence >= s.ThresholdProbability)
-                .ToListAsync();
-
-            string timeStr = GetVietnamTime(DateTime.UtcNow);
+            var subscriptions = subsByWard[stream.Camera.WardId];
+            string timeStr = DateTime.UtcNow.AddHours(7).ToString("HH:mm"); // Giờ VN cứng
 
             foreach (var sub in subscriptions)
             {
-                // Gửi Firebase Push Notification
-                if (!string.IsNullOrEmpty(sub.User.DeviceToken))
+                // Kiểm tra ngưỡng tin cậy tại bộ nhớ
+                if (confidence >= sub.ThresholdProbability && !string.IsNullOrEmpty(sub.User.DeviceToken))
                 {
-                    try
+                    // Fire and forget - không chặn luồng chính
+                    _ = Task.Run(async () =>
                     {
-                        await firebase.SendToDeviceAsync(
-                            sub.User.DeviceToken, 
-                            "Cảnh báo mưa! 🌧️", 
-                            $"Mưa tại {stream.Camera.Name} lúc {timeStr}"
-                        );
-                        _logger.LogInformation($"📱 Đã gửi push notification cho {sub.User.Email}");
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, $"Lỗi gửi push notification cho {sub.User.Email}");
-                    }
+                        try
+                        {
+                            await firebase.SendToDeviceAsync(
+                                sub.User.DeviceToken, 
+                                "Cảnh báo mưa! 🌧️", 
+                                $"Mưa tại {stream.Camera.Name} lúc {timeStr}"
+                            );
+                            _logger.LogInformation($"📱 Đã gửi push notification cho {sub.User.Email}");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, $"Lỗi gửi push notification cho {sub.User.Email}");
+                        }
+                    });
                 }
             }
         }

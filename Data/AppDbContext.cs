@@ -54,8 +54,8 @@ namespace HcmcRainVision.Backend.Data
                     entity.SetTableName(ToSnakeCase(currentTableName));
                 }
 
-                // 2. Chuyển tên cột
-                // Ví dụ: "SourceUrl" -> "source_url", "IsRaining" -> "is_raining"
+                // 2. Chuyển tên cột thành snake_case
+                // Ví dụ: "IsRaining" -> "is_raining", "CameraId" -> "camera_id"
                 foreach (var property in entity.GetProperties())
                 {
                     // Chỉ đổi tên những cột chưa được cấu hình tên cụ thể
