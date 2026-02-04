@@ -23,6 +23,36 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             _env = env;
         }
 
+        public override async Task StartAsync(CancellationToken cancellationToken)
+        {
+            // 1. Dọn dẹp các Job bị treo do lần tắt server trước
+            await ResetStuckJobsAsync();
+            await base.StartAsync(cancellationToken);
+        }
+
+        private async Task ResetStuckJobsAsync()
+        {
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var stuckJobs = await db.IngestionJobs
+                    .Where(j => j.Status == "Running")
+                    .ToListAsync();
+
+                if (stuckJobs.Any())
+                {
+                    foreach (var job in stuckJobs)
+                    {
+                        job.Status = "Failed";
+                        job.Notes = "System restart/crash while running";
+                        job.EndedAt = DateTime.UtcNow;
+                    }
+                    await db.SaveChangesAsync();
+                    _logger.LogWarning($"Đã dọn dẹp {stuckJobs.Count} job bị treo.");
+                }
+            }
+        }
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation("Rain Scanning Worker starting...");
@@ -212,6 +242,14 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             await db.SaveChangesAsync(token);
         }
 
+        // Helper chuyển đổi giờ VN
+        private string GetVietnamTime(DateTime utcTime)
+        {
+            TimeZoneInfo vnTimeZone = TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
+            DateTime vnTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, vnTimeZone);
+            return vnTime.ToString("HH:mm dd/MM/yyyy");
+        }
+
         private async Task SendNotificationsAsync(CameraStream stream, float confidence, AppDbContext db, IFirebasePushService firebase)
         {
             if (stream.Camera.WardId == null) return;
@@ -223,6 +261,8 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                 .Where(s => s.IsEnabled && s.WardId == stream.Camera.WardId && confidence >= s.ThresholdProbability)
                 .ToListAsync();
 
+            string timeStr = GetVietnamTime(DateTime.UtcNow);
+
             foreach (var sub in subscriptions)
             {
                 // Gửi Firebase Push Notification
@@ -233,7 +273,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         await firebase.SendToDeviceAsync(
                             sub.User.DeviceToken, 
                             "Cảnh báo mưa! 🌧️", 
-                            $"Phát hiện mưa tại {stream.Camera.Name} ({stream.Camera.Ward?.WardName})"
+                            $"Mưa tại {stream.Camera.Name} lúc {timeStr}"
                         );
                         _logger.LogInformation($"📱 Đã gửi push notification cho {sub.User.Email}");
                     }

@@ -51,14 +51,16 @@ namespace HcmcRainVision.Backend.Services.Crawling
 
             // 4. Retry Policy: Thử lại tối đa 3 lần nếu bị lỗi mạng
             int retryCount = 0;
-            while (retryCount < 3)
+            int maxRetries = 3;
+            while (retryCount < maxRetries)
             {
                 try 
                 {
                     _logger.LogInformation($"Đang tải ảnh từ: {url} (Lần thử: {retryCount + 1})");
                     
-                    // Gửi request
-                    var response = await client.GetAsync(url);
+                    // Timeout ngắn (5 giây) để tránh treo job lâu
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    var response = await client.GetAsync(url, cts.Token);
                     
                     // Nếu lỗi (404, 403...) ném ra exception
                     response.EnsureSuccessStatusCode();
@@ -77,7 +79,7 @@ namespace HcmcRainVision.Backend.Services.Crawling
                 catch (Exception ex)
                 {
                     retryCount++;
-                    if (retryCount >= 3) 
+                    if (retryCount >= maxRetries) 
                     {
                         _logger.LogError($"❌ Bỏ cuộc sau 3 lần thử camera {url}: {ex.Message}");
                         return null; // Trả về null để Worker biết mà bỏ qua
