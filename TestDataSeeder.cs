@@ -1,6 +1,7 @@
 using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.Entities;
 using NetTopologySuite.Geometries;
+using Microsoft.EntityFrameworkCore;
 
 namespace HcmcRainVision.Backend;
 
@@ -8,6 +9,9 @@ public static class TestDataSeeder
 {
     public static async Task SeedTestData(AppDbContext context)
     {
+        // --- 0. MIGRATE DỮ LIỆU CŨ (Chạy trước khi seed) ---
+        await MigrateOldData(context);
+
         // 1. Seed Cameras (Nếu chưa có)
         if (!context.Cameras.Any())
         {
@@ -169,6 +173,120 @@ public static class TestDataSeeder
             await context.SaveChangesAsync();
             
             Console.WriteLine("✅ Đã tạo User: admin / admin123");
+        }
+
+        // --- 4. SEED WARDS (MỚI) ---
+        if (!context.Wards.Any())
+        {
+            Console.WriteLine("🏘️ Đang thêm dữ liệu Ward mẫu...");
+            var wards = new[]
+            {
+                new Ward { WardId = "BN_Q1", WardName = "Phường Bến Nghé", DistrictName = "Quận 1" },
+                new Ward { WardId = "BT_Q1", WardName = "Phường Bến Thành", DistrictName = "Quận 1" },
+                new Ward { WardId = "VTS_Q3", WardName = "Phường Võ Thị Sáu", DistrictName = "Quận 3" },
+                new Ward { WardId = "TD_TPTD", WardName = "Phường Thảo Điền", DistrictName = "TP. Thủ Đức" }
+            };
+            await context.Wards.AddRangeAsync(wards);
+            await context.SaveChangesAsync();
+            Console.WriteLine($"✅ Đã thêm {wards.Length} wards.");
+        }
+
+        // --- 5. MIGRATE CAMERA.SOURCEURL → CAMERASTREAM (MỚI) ---
+        // Logic: Copy SourceUrl từ Camera sang bảng CameraStream
+        // Chỉ chạy khi CameraStream trống và có Cameras
+        if (!context.CameraStreams.Any() && context.Cameras.Any())
+        {
+            Console.WriteLine("🔄 Đang migrate Camera.SourceUrl → CameraStream...");
+            var cameras = await context.Cameras.ToListAsync();
+            var streams = new List<CameraStream>();
+            
+            foreach (var cam in cameras)
+            {
+                if (!string.IsNullOrEmpty(cam.SourceUrl))
+                {
+                    streams.Add(new CameraStream
+                    {
+                        CameraId = cam.Id,
+                        StreamUrl = cam.SourceUrl,
+                        StreamType = cam.SourceUrl.Contains("TEST_MODE") ? "Test" : "Snapshot",
+                        IsPrimary = true,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+            }
+            
+            if (streams.Count > 0)
+            {
+                await context.CameraStreams.AddRangeAsync(streams);
+                await context.SaveChangesAsync();
+                Console.WriteLine($"✅ Đã migrate {streams.Count} camera streams.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Migration dữ liệu từ cấu trúc cũ sang mới (Chạy 1 lần)
+    /// </summary>
+    private static async Task MigrateOldData(AppDbContext context)
+    {
+        // 1. Tạo Ward mặc định nếu chưa có
+        if (!await context.Wards.AnyAsync())
+        {
+            Console.WriteLine("🏘️ Tạo Ward mặc định...");
+            context.Wards.Add(new Ward 
+            { 
+                WardId = "DEFAULT", 
+                WardName = "Chưa xác định", 
+                DistrictName = "Chưa xác định",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await context.SaveChangesAsync();
+        }
+
+        // 2. Chuyển Camera.SourceUrl -> CameraStream (nếu chưa có streams)
+        var camerasWithoutStreams = await context.Cameras
+            .Include(c => c.Streams)
+            .Where(c => !c.Streams.Any() && !string.IsNullOrEmpty(c.SourceUrl))
+            .ToListAsync();
+
+        if (camerasWithoutStreams.Any())
+        {
+            Console.WriteLine($"🔄 Migrate {camerasWithoutStreams.Count} cameras SourceUrl -> CameraStream...");
+            
+            foreach (var cam in camerasWithoutStreams)
+            {
+#pragma warning disable CS0618 // Type or member is obsolete
+                context.CameraStreams.Add(new CameraStream
+                {
+                    CameraId = cam.Id,
+                    StreamUrl = cam.SourceUrl,
+                    StreamType = cam.SourceUrl.Contains("TEST_MODE") ? "Test" : "Snapshot",
+                    IsPrimary = true,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                });
+#pragma warning restore CS0618
+            }
+            
+            await context.SaveChangesAsync();
+            Console.WriteLine("✅ Migration hoàn tất.");
+        }
+
+        // 3. Gán Ward mặc định cho các Camera chưa có WardId
+        var camerasWithoutWard = await context.Cameras
+            .Where(c => c.WardId == null)
+            .ToListAsync();
+
+        if (camerasWithoutWard.Any())
+        {
+            Console.WriteLine($"🏘️ Gán Ward mặc định cho {camerasWithoutWard.Count} cameras...");
+            foreach (var cam in camerasWithoutWard)
+            {
+                cam.WardId = "DEFAULT";
+            }
+            await context.SaveChangesAsync();
         }
     }
 }

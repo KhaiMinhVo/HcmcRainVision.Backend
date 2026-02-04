@@ -240,5 +240,154 @@ namespace HcmcRainVision.Backend.Controllers
             
             return Ok(new { Summary = summary, Details = results });
         }
+
+        // 6. Lấy lịch sử Ingestion Jobs (Tracking quét camera)
+        [HttpGet("ingestion-jobs")]
+        public async Task<IActionResult> GetIngestionJobs(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20,
+            [FromQuery] string? status = null)
+        {
+            var query = _context.IngestionJobs
+                .Include(j => j.Attempts)
+                .AsQueryable();
+
+            // Filter theo status nếu có
+            if (!string.IsNullOrEmpty(status))
+            {
+                query = query.Where(j => j.Status == status);
+            }
+
+            var totalCount = await query.CountAsync();
+            
+            var jobs = await query
+                .OrderByDescending(j => j.StartedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(j => new
+                {
+                    j.JobId,
+                    j.JobType,
+                    j.Status,
+                    j.StartedAt,
+                    j.EndedAt,
+                    Duration = j.EndedAt.HasValue 
+                        ? (j.EndedAt.Value - j.StartedAt).TotalSeconds 
+                        : (double?)null,
+                    j.Notes,
+                    TotalAttempts = j.Attempts.Count,
+                    SuccessfulAttempts = j.Attempts.Count(a => a.Status == "Success"),
+                    FailedAttempts = j.Attempts.Count(a => a.Status == "Failed"),
+                    AvgLatency = j.Attempts.Any() 
+                        ? j.Attempts.Average(a => a.LatencyMs) 
+                        : 0
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                Page = page,
+                PageSize = pageSize,
+                TotalCount = totalCount,
+                TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                Jobs = jobs
+            });
+        }
+
+        // 7. Lấy chi tiết một Ingestion Job (bao gồm tất cả attempts)
+        [HttpGet("ingestion-jobs/{jobId}")]
+        public async Task<IActionResult> GetIngestionJobDetails(Guid jobId)
+        {
+            var job = await _context.IngestionJobs
+                .Include(j => j.Attempts)
+                .Where(j => j.JobId == jobId)
+                .Select(j => new
+                {
+                    j.JobId,
+                    j.JobType,
+                    j.Status,
+                    j.StartedAt,
+                    j.EndedAt,
+                    Duration = j.EndedAt.HasValue 
+                        ? (j.EndedAt.Value - j.StartedAt).TotalSeconds 
+                        : (double?)null,
+                    j.Notes,
+                    Attempts = j.Attempts.Select(a => new
+                    {
+                        a.AttemptId,
+                        a.CameraId,
+                        a.Status,
+                        a.LatencyMs,
+                        a.HttpStatus,
+                        a.ErrorMessage,
+                        a.AttemptAt
+                    }).OrderBy(a => a.AttemptAt).ToList()
+                })
+                .FirstOrDefaultAsync();
+
+            if (job == null)
+                return NotFound(new { Message = "Job not found" });
+
+            return Ok(job);
+        }
+
+        // 8. Thống kê Ingestion Performance
+        [HttpGet("ingestion-stats")]
+        public async Task<IActionResult> GetIngestionStats([FromQuery] int days = 7)
+        {
+            var cutoffDate = DateTime.UtcNow.AddDays(-days);
+
+            var jobs = await _context.IngestionJobs
+                .Include(j => j.Attempts)
+                .Where(j => j.StartedAt >= cutoffDate)
+                .ToListAsync();
+
+            var totalJobs = jobs.Count;
+            var completedJobs = jobs.Count(j => j.Status == "Completed");
+            var failedJobs = jobs.Count(j => j.Status == "Failed");
+
+            var allAttempts = jobs.SelectMany(j => j.Attempts).ToList();
+            var totalAttempts = allAttempts.Count;
+            var successfulAttempts = allAttempts.Count(a => a.Status == "Success");
+            var failedAttempts = allAttempts.Count(a => a.Status == "Failed");
+
+            // Camera có tỷ lệ lỗi cao nhất
+            var cameraFailureStats = allAttempts
+                .GroupBy(a => a.CameraId)
+                .Select(g => new
+                {
+                    CameraId = g.Key,
+                    TotalAttempts = g.Count(),
+                    FailedAttempts = g.Count(a => a.Status == "Failed"),
+                    FailureRate = g.Count() > 0 
+                        ? (double)g.Count(a => a.Status == "Failed") / g.Count() * 100 
+                        : 0,
+                    AvgLatency = g.Average(a => a.LatencyMs)
+                })
+                .OrderByDescending(x => x.FailureRate)
+                .Take(10)
+                .ToList();
+
+            return Ok(new
+            {
+                Period = $"Last {days} days",
+                Jobs = new
+                {
+                    Total = totalJobs,
+                    Completed = completedJobs,
+                    Failed = failedJobs,
+                    SuccessRate = totalJobs > 0 ? Math.Round((double)completedJobs / totalJobs * 100, 2) : 0
+                },
+                Attempts = new
+                {
+                    Total = totalAttempts,
+                    Successful = successfulAttempts,
+                    Failed = failedAttempts,
+                    SuccessRate = totalAttempts > 0 ? Math.Round((double)successfulAttempts / totalAttempts * 100, 2) : 0,
+                    AvgLatency = allAttempts.Any() ? Math.Round(allAttempts.Average(a => a.LatencyMs), 0) : 0
+                },
+                ProblematicCameras = cameraFailureStats
+            });
+        }
     }
 }

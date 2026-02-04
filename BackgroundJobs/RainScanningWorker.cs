@@ -44,47 +44,100 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                 // --- 1. DỌN DẸP ẢNH CŨ (Tự động xóa ảnh quá 7 ngày để không đầy ổ cứng) ---
                 await CleanupOldData(stoppingToken);
 
+                // --- 2. TẠO INGESTION JOB MỚI ---
+                Guid jobId = Guid.NewGuid();
+                using (var scope = _serviceProvider.CreateScope())
+                {
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    var job = new IngestionJob 
+                    { 
+                        JobId = jobId,
+                        JobType = "RainScan",
+                        Status = "Running",
+                        StartedAt = DateTime.UtcNow 
+                    };
+                    db.IngestionJobs.Add(job);
+                    await db.SaveChangesAsync();
+                    _logger.LogInformation($"🚀 Bắt đầu Job quét #{jobId}");
+                }
+
                 try
                 {
-                    // Lấy danh sách ID camera để xử lý (chỉ lấy ID để tránh lỗi tracking)
-                    List<string> cameraIds;
+                    // Lấy danh sách STREAM thay vì Camera ID
+                    List<CameraStream> activeStreams;
                     using (var scope = _serviceProvider.CreateScope())
                     {
                         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                        cameraIds = await dbContext.Cameras.Select(c => c.Id).ToListAsync(stoppingToken);
+                        activeStreams = await dbContext.CameraStreams
+                            .Include(s => s.Camera)
+                            .ThenInclude(c => c.Ward)
+                            .Where(s => s.IsActive && s.IsPrimary)
+                            .ToListAsync(stoppingToken);
                     }
 
-                    if (cameraIds.Count == 0)
+                    if (activeStreams.Count == 0)
                     {
-                        _logger.LogWarning("⚠️ Không tìm thấy camera nào trong Database!");
+                        _logger.LogWarning("⚠️ Không tìm thấy camera stream nào đang active!");
                     }
                     else
                     {
                         // 🚀 XỬ LÝ SONG SONG
-                        // MaxDegreeOfParallelism = 5: Xử lý tối đa 5 cameras cùng lúc
-                        // - Tăng lên 10-15 nếu server mạnh và có nhiều cameras
-                        // - Giảm xuống 2-3 nếu server yếu hoặc bandwidth hạn chế
                         var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = stoppingToken };
 
-                        await Parallel.ForEachAsync(cameraIds, parallelOptions, async (camId, token) =>
+                        await Parallel.ForEachAsync(activeStreams, parallelOptions, async (stream, token) =>
                         {
+                            var attemptStartTime = DateTime.UtcNow;
+                            string attemptStatus = "Success";
+                            string? errorMessage = null;
+                            int latencyMs = 0;
+                            
                             try
                             {
                                 using var scope = _serviceProvider.CreateScope();
                                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                                 
-                                // QUAN TRỌNG: Load lại Camera trong scope này để EF Core Tracking hoạt động
-                                var cam = await dbContext.Cameras.FindAsync(new object[] { camId }, token);
-                                if (cam == null) return;
+                                var cam = stream.Camera;
+                                if (cam == null) 
+                                {
+                                    attemptStatus = "Failed";
+                                    errorMessage = "Camera not found";
+                                    return;
+                                }
 
                                 var crawler = scope.ServiceProvider.GetRequiredService<ICameraCrawler>();
                                 var processor = scope.ServiceProvider.GetRequiredService<IImagePreProcessor>();
                                 var aiService = scope.ServiceProvider.GetRequiredService<RainPredictionService>();
                                 var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
 
-                                // --- BƯỚC 1: CRAWL ---
-                                byte[]? rawBytes = await crawler.FetchImageAsync(cam.SourceUrl);
-                                if (rawBytes == null || rawBytes.Length == 0) return;
+                                // --- BƯỚC 1: CRAWL (Dùng StreamUrl từ bảng mới) ---
+                                var crawlStartTime = DateTime.UtcNow;
+                                byte[]? rawBytes = await crawler.FetchImageAsync(stream.StreamUrl);
+                                latencyMs = (int)(DateTime.UtcNow - crawlStartTime).TotalMilliseconds;
+                                
+                                if (rawBytes == null || rawBytes.Length == 0) 
+                                {
+                                    attemptStatus = "Failed";
+                                    errorMessage = "Failed to fetch image";
+                                    
+                                    // Ghi log trạng thái Offline
+                                    dbContext.CameraStatusLogs.Add(new CameraStatusLog 
+                                    { 
+                                        CameraId = cam.Id, 
+                                        Status = "Offline",
+                                        Reason = "Failed to fetch image",
+                                        CheckedAt = DateTime.UtcNow 
+                                    });
+                                    await dbContext.SaveChangesAsync(token);
+                                    return;
+                                }
+                                
+                                // Ghi log trạng thái Online
+                                dbContext.CameraStatusLogs.Add(new CameraStatusLog 
+                                { 
+                                    CameraId = cam.Id, 
+                                    Status = "Online",
+                                    CheckedAt = DateTime.UtcNow 
+                                });
 
                                 // --- BƯỚC 2: PRE-PROCESS ---
                                 byte[]? processedBytes = processor.ProcessForAI(rawBytes);
@@ -93,90 +146,84 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                 // --- BƯỚC 3: AI DETECT ---
                                 var prediction = aiService.Predict(processedBytes);
 
-                                // --- BƯỚC 4: LOGIC XỬ LÝ KẾT QUẢ ---
+                                // --- BƯỚC 4: LOGIC XỬ LÝ KẾT QUẢ & GỬI THÔNG BÁO ---
                                 string? savedImageUrl = null;
                                 
-                                // Kiểm tra xem có nên gửi thông báo không (Chống SPAM)
-                                // Logic: Chưa gửi bao giờ HOẶC đã quá 30 phút
-                                bool shouldAlert = cam.LastRainAlertSent == null || 
-                                                   (DateTime.UtcNow - cam.LastRainAlertSent.Value).TotalMinutes > 30;
-
-                                // --- CẢI TIẾN: Lưu ảnh để retrain model (False negative detection) ---
+                                // Kiểm tra xem có nên lưu ảnh không
                                 bool isUnsure = prediction.Confidence > 0.4f && prediction.Confidence < 0.6f;
-                                bool randomSample = new Random().Next(0, 100) < 5; // 5% xác suất lưu mẫu ngẫu nhiên
+                                bool randomSample = new Random().Next(0, 100) < 5;
                                 bool shouldSaveImage = prediction.IsRaining || isUnsure || randomSample;
 
                                 if (shouldSaveImage)
                                 {
-                                    // Lưu ảnh cho training/debugging
                                     string fileName = $"{cam.Id}_{DateTime.UtcNow.Ticks}.jpg";
-                                    
-                                    // 1. Thử upload lên Cloudinary trước
                                     var cloudStorage = scope.ServiceProvider.GetRequiredService<ICloudStorageService>();
                                     var cloudinaryUrl = await cloudStorage.UploadImageAsync(processedBytes, fileName);
                                     
                                     if (!string.IsNullOrEmpty(cloudinaryUrl))
                                     {
-                                        // Thành công → Dùng URL từ Cloudinary
                                         savedImageUrl = cloudinaryUrl;
                                         _logger.LogInformation($"☁️ Đã upload lên Cloudinary: {cloudinaryUrl}");
                                     }
                                     else
                                     {
-                                        // Fallback → Lưu local nếu Cloudinary không khả dụng
                                         string fullPath = Path.Combine(saveFolder, fileName);
                                         await File.WriteAllBytesAsync(fullPath, processedBytes, token);
                                         savedImageUrl = $"/images/rain_logs/{fileName}";
                                         _logger.LogWarning($"⚠️ Cloudinary không khả dụng, lưu local: {savedImageUrl}");
                                     }
-
-                                    // Log lý do lưu ảnh
-                                    if (isUnsure)
-                                        _logger.LogInformation($"💾 Lưu ảnh uncertain ({prediction.Confidence:0.00}) cho {cam.Id}");
-                                    else if (randomSample && !prediction.IsRaining)
-                                        _logger.LogInformation($"💾 Lưu ảnh sample ngẫu nhiên (no rain) cho {cam.Id}");
                                 }
 
                                 if (prediction.IsRaining)
                                 {
-                                    if (shouldAlert)
+                                    // --- GỬI THÔNG BÁO BẰNG ALERTSUBSCRIPTION (MỚI) ---
+                                    if (!string.IsNullOrEmpty(cam.WardId))
                                     {
-                                        // 1. Gửi SignalR (đã có await)
-                                        await _hubContext.Clients.All.SendAsync("ReceiveRainAlert", new
-                                        {
-                                            CameraId = cam.Id,
-                                            CameraName = cam.Name,
-                                            Latitude = cam.Latitude,
-                                            Longitude = cam.Longitude,
-                                            ImageUrl = savedImageUrl,
-                                            Confidence = prediction.Confidence,
-                                            Time = DateTime.UtcNow
-                                        }, token);
+                                        var subscriptions = await dbContext.AlertSubscriptions
+                                            .Include(s => s.User)
+                                            .ThenInclude(u => u.UserNotificationSettings)
+                                            .Where(s => s.IsEnabled 
+                                                     && s.WardId == cam.WardId 
+                                                     && prediction.Confidence >= s.ThresholdProbability)
+                                            .ToListAsync(token);
 
-                                        // 2. Gửi Email (chỉ gửi khi tin cậy cao > 70%)
-                                        if (prediction.Confidence > 0.7)
+                                        if (subscriptions.Any())
                                         {
-                                            string subject = $"⚠️ CẢNH BÁO MƯA: {cam.Name}";
-                                            string body = $"<p>Phát hiện mưa tại <b>{cam.Name}</b> lúc {DateTime.Now}</p><p>Độ tin cậy: {prediction.Confidence*100:0}%</p>";
-                                            // Không await để tránh block luồng xử lý chính
-                                            _ = emailService.SendEmailAsync("khaivpmse184623@fpt.edu.vn", subject, body);
+                                            _logger.LogInformation($"📡 Tìm thấy {subscriptions.Count} subscriptions cho Ward {cam.WardId}");
+                                            
+                                            // TODO: Implement Firebase notification
+                                            // foreach (var sub in subscriptions)
+                                            // {
+                                            //     var deviceToken = sub.User.UserNotificationSettings.FirstOrDefault()?.DeviceToken;
+                                            //     if (!string.IsNullOrEmpty(deviceToken))
+                                            //     {
+                                            //         await firebaseService.SendToDeviceAsync(deviceToken, "Mưa rồi!", $"Mưa tại {cam.Name}");
+                                            //     }
+                                            // }
                                         }
+                                    }
 
-                                        // 3. Cập nhật thời gian gửi để lần sau không gửi nữa
-                                        cam.LastRainAlertSent = DateTime.UtcNow;
-                                        // SaveChanges ở cuối sẽ lưu thay đổi này vào DB
-                                        _logger.LogInformation($"📡 Đã gửi Alert cho {cam.Id}");
-                                    }
-                                }
-                                else 
-                                {
-                                    // CẢI TIẾN: Nếu tạnh mưa, reset lại trạng thái để sẵn sàng báo cơn mưa mới ngay lập tức
-                                    if (cam.LastRainAlertSent != null)
+                                    // Gửi SignalR
+                                    await _hubContext.Clients.All.SendAsync("ReceiveRainAlert", new
                                     {
-                                        cam.LastRainAlertSent = null; 
-                                        // Có thể gửi thêm 1 event SignalR báo "Đã tạnh mưa" nếu muốn Frontend hiển thị
-                                        _logger.LogInformation($"🌤️ Đã tạnh mưa tại {cam.Id}, reset cảnh báo.");
+                                        CameraId = cam.Id,
+                                        CameraName = cam.Name,
+                                        Latitude = cam.Latitude,
+                                        Longitude = cam.Longitude,
+                                        ImageUrl = savedImageUrl,
+                                        Confidence = prediction.Confidence,
+                                        Time = DateTime.UtcNow
+                                    }, token);
+
+                                    // Gửi Email (confidence cao)
+                                    if (prediction.Confidence > 0.7)
+                                    {
+                                        string subject = $"⚠️ CẢNH BÁO MƯA: {cam.Name}";
+                                        string body = $"<p>Phát hiện mưa tại <b>{cam.Name}</b> lúc {DateTime.Now}</p><p>Độ tin cậy: {prediction.Confidence*100:0}%</p>";
+                                        _ = emailService.SendEmailAsync("khaivpmse184623@fpt.edu.vn", subject, body);
                                     }
+
+                                    _logger.LogInformation($"📡 Đã gửi Alert cho {cam.Id}");
                                 }
 
                                 // --- BƯỚC 5: LƯU LOG ---
@@ -197,14 +244,74 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError($"❌ Lỗi camera {camId}: {ex.Message}");
+                                _logger.LogError($"❌ Lỗi stream {stream.CameraId}: {ex.Message}");
+                                attemptStatus = "Failed";
+                                errorMessage = ex.Message;
+                            }
+                            finally
+                            {
+                                // --- GHI INGESTION ATTEMPT ---
+                                try
+                                {
+                                    using var scope = _serviceProvider.CreateScope();
+                                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                                    
+                                    var attempt = new IngestionAttempt
+                                    {
+                                        JobId = jobId,
+                                        CameraId = stream.CameraId,
+                                        Status = attemptStatus,
+                                        LatencyMs = latencyMs,
+                                        HttpStatus = attemptStatus == "Success" ? 200 : 500,
+                                        ErrorMessage = errorMessage,
+                                        AttemptAt = attemptStartTime
+                                    };
+                                    
+                                    db.IngestionAttempts.Add(attempt);
+                                    await db.SaveChangesAsync();
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError($"⚠️ Không thể ghi IngestionAttempt: {ex.Message}");
+                                }
                             }
                         });
+                    }
+                    
+                    // --- 3. CẬP NHẬT JOB HOÀN TẤT ---
+                    using (var scope = _serviceProvider.CreateScope())
+                    {
+                        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var job = await db.IngestionJobs.FindAsync(jobId);
+                        if (job != null)
+                        {
+                            job.Status = "Completed";
+                            job.EndedAt = DateTime.UtcNow;
+                            job.Notes = $"Processed {activeStreams.Count} camera streams";
+                            await db.SaveChangesAsync();
+                            _logger.LogInformation($"✅ Hoàn thành Job #{jobId}");
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError($"❌ Worker Error: {ex.Message}");
+                    
+                    // Cập nhật Job thành Failed
+                    try
+                    {
+                        using var scope = _serviceProvider.CreateScope();
+                        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var job = await db.IngestionJobs.FindAsync(jobId);
+                        if (job != null)
+                        {
+                            job.Status = "Failed";
+                            job.EndedAt = DateTime.UtcNow;
+                            job.Notes = $"Error: {ex.Message}";
+                            await db.SaveChangesAsync();
+                        }
+                    }
+                    catch { /* Ignore */ }
                 }
 
                 // ⏰ TẦN SUẤT QUÉT: 5 phút (Có thể điều chỉnh)

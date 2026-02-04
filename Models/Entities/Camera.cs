@@ -1,19 +1,33 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace HcmcRainVision.Backend.Models.Entities
 {
     public class Camera
     {
         [Key]
-        public string Id { get; set; } = null!; // Ví dụ: "CAM_Q1_001"
+        public string Id { get; set; } = null!; 
 
-        public string Name { get; set; } = null!; // Ví dụ: "Camera Ngã 6 Phù Đổng"
+        public string Name { get; set; } = null!; 
+        public double Latitude { get; set; } 
+        public double Longitude { get; set; } 
 
-        public string SourceUrl { get; set; } = null!; // Link ảnh snapshot
+        // --- LIÊN KẾT MỚI ---
+        public string? WardId { get; set; }
+        
+        [ForeignKey("WardId")]
+        public Ward? Ward { get; set; }
 
-        public double Latitude { get; set; } // Vĩ độ
-        public double Longitude { get; set; } // Kinh độ
+        public ICollection<CameraStream> Streams { get; set; } = new List<CameraStream>();
+        public ICollection<CameraStatusLog> StatusLogs { get; set; } = new List<CameraStatusLog>();
 
-        public DateTime? LastRainAlertSent { get; set; } // Thời gian gửi cảnh báo mưa lần cuối
+        public string Status { get; set; } = "Active";
+
+        // --- CÁC TRƯỜNG CŨ (TẠM GIỮ ĐỂ MIGRATE, SẼ XÓA SAU) ---
+        [Obsolete("Use CameraStream.StreamUrl instead")]
+        public string SourceUrl { get; set; } = null!; 
+        
+        [Obsolete("No longer needed with AlertSubscription system")]
+        public DateTime? LastRainAlertSent { get; set; }
     }
 }
