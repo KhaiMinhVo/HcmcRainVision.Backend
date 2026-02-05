@@ -13,5 +13,6 @@ WORKDIR /app
 COPY --from=publish /app/publish .
 RUN mkdir -p wwwroot/images/rain_logs
 EXPOSE 8080
-ENV ASPNETCORE_URLS=http://+:8080
+# Sử dụng PORT từ môi trường (Render, Railway, etc.) hoặc mặc định 8080
+ENV ASPNETCORE_URLS=http://+:${PORT:-8080}
 ENTRYPOINT ["dotnet", "HcmcRainVision.Backend.dll"]

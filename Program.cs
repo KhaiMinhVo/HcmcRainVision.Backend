@@ -167,8 +167,18 @@ var app = builder.Build();
 // TODO: Sau khi có dữ liệu, nên thêm lại điều kiện IsDevelopment() để bảo mật
 using (var scope = app.Services.CreateScope())
 {
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await TestDataSeeder.SeedTestData(dbContext);
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    try
+    {
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await TestDataSeeder.SeedTestData(dbContext);
+        logger.LogInformation("✅ Seed test data thành công.");
+    }
+    catch (Exception ex)
+    {
+        // Ghi log lỗi nhưng KHÔNG làm crash app
+        logger.LogError(ex, "❌ Lỗi khi Seed Data. App vẫn sẽ tiếp tục chạy.");
+    }
 }
 
 // Pipeline
