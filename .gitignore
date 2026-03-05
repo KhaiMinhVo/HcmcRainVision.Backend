@@ -10,3 +10,8 @@ appsettings.Development.json
 appsettings.Local.json
 **/appsettings.*.json
 !appsettings.json
+
+# Environment variables (do not commit)
+.env
+.env.local
+.env.production
