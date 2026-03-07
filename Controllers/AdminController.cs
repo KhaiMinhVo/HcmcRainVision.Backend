@@ -91,21 +91,45 @@ namespace HcmcRainVision.Backend.Controllers
 
         // 3. Quản lý User - Lấy danh sách tất cả user
         [HttpGet("users")]
-        public async Task<IActionResult> GetAllUsers()
+        public async Task<IActionResult> GetAllUsers(
+            [FromQuery] string? search,
+            [FromQuery] string? sortBy = "newest",
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
-            var users = await _context.Users
-                .Select(u => new UserAdminViewDto
-                {
-                    Id = u.Id,
-                    Username = u.Username,
-                    Email = u.Email,
-                    FullName = u.FullName,
-                    Role = u.Role,
-                    IsActive = u.IsActive,
-                    CreatedAt = u.CreatedAt
-                })
-                .ToListAsync();
-            return Ok(users);
+            var query = _context.Users.AsQueryable();
+
+            // Search theo Email hoặc Username
+            if (!string.IsNullOrEmpty(search))
+            {
+                query = query.Where(u => u.Email.Contains(search) || u.Username.Contains(search));
+            }
+
+            // Sort theo ngày tạo (CreatedAt)
+            query = sortBy?.ToLower() switch
+            {
+                "oldest" => query.OrderBy(u => u.CreatedAt),
+                "newest" => query.OrderByDescending(u => u.CreatedAt),
+                "username" => query.OrderBy(u => u.Username),
+                _ => query.OrderByDescending(u => u.CreatedAt)
+            };
+
+            var totalUsers = await query.CountAsync();
+            var users = await query.Skip((page - 1) * pageSize)
+                                   .Take(pageSize)
+                                   .Select(u => new UserAdminViewDto
+                                   {
+                                       Id = u.Id,
+                                       Username = u.Username,
+                                       Email = u.Email,
+                                       FullName = u.FullName,
+                                       Role = u.Role,
+                                       IsActive = u.IsActive,
+                                       CreatedAt = u.CreatedAt
+                                   })
+                                   .ToListAsync();
+
+            return Ok(new { Total = totalUsers, Page = page, PageSize = pageSize, Data = users });
         }
 
         // 4. Khóa/Mở khóa tài khoản user

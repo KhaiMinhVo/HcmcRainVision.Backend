@@ -21,9 +21,33 @@ namespace HcmcRainVision.Backend.Controllers
 
         // 1. Lấy danh sách camera (Public - Ai cũng xem được)
         [HttpGet]
-        public async Task<IActionResult> GetCameras()
+        public async Task<IActionResult> GetCameras(
+            [FromQuery] string? search,
+            [FromQuery] string? sortBy,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 10)
         {
-            return Ok(await _context.Cameras.ToListAsync());
+            var query = _context.Cameras.AsQueryable();
+
+            // Filtering & Search
+            if (!string.IsNullOrEmpty(search))
+            {
+                query = query.Where(c => c.Name.Contains(search) || c.Id.Contains(search));
+            }
+
+            // Sorting
+            query = sortBy?.ToLower() switch
+            {
+                "name" => query.OrderBy(c => c.Name),
+                "name_desc" => query.OrderByDescending(c => c.Name),
+                _ => query.OrderBy(c => c.Id)
+            };
+
+            // Paging
+            var totalItems = await query.CountAsync();
+            var items = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+
+            return Ok(new { Total = totalItems, Page = page, PageSize = pageSize, Data = items });
         }
 
         // 2. Thêm camera mới (Chỉ Admin)
