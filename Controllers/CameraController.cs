@@ -27,7 +27,8 @@ namespace HcmcRainVision.Backend.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 10)
         {
-            var query = _context.Cameras.AsQueryable();
+            // ĐÃ SỬA: Thêm Include(c => c.Streams) để join bảng CameraStreams
+            var query = _context.Cameras.Include(c => c.Streams).AsQueryable();
 
             // Filtering & Search
             if (!string.IsNullOrEmpty(search))
@@ -45,7 +46,22 @@ namespace HcmcRainVision.Backend.Controllers
 
             // Paging
             var totalItems = await query.CountAsync();
-            var items = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+            
+            // ĐÃ SỬA: Tách riêng việc lấy danh sách camera...
+            var cameras = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+
+            // ... và Map dữ liệu để thêm trường StreamUrl cho Frontend
+            var items = cameras.Select(c => new 
+            {
+                Id = c.Id,
+                Name = c.Name,
+                Latitude = c.Latitude,
+                Longitude = c.Longitude,
+                WardId = c.WardId,
+                Status = c.Status,
+                // Lấy link Stream chính (nếu có)
+                StreamUrl = c.Streams.FirstOrDefault(s => s.IsPrimary)?.StreamUrl
+            });
 
             return Ok(new { Total = totalItems, Page = page, PageSize = pageSize, Data = items });
         }

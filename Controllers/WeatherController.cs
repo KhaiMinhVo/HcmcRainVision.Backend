@@ -60,7 +60,8 @@ namespace HcmcRainVision.Backend.Controllers
                 Longitude = x.Location?.X ?? 0, // X là Kinh độ
                 IsRaining = x.IsRaining,
                 Confidence = x.Confidence,
-                TimeAgo = GetTimeAgo(x.Timestamp)
+                TimeAgo = GetTimeAgo(x.Timestamp),
+                ImageUrl = x.ImageUrl
             });
 
             return Ok(result);
