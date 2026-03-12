@@ -152,10 +152,12 @@ builder.Services.AddHealthChecks()
     .AddNpgSql(connectionString!); // Check kết nối DB
 
 // 9. Cấu hình CORS (Để React gọi được API + SignalR)
+// Origin = scheme + host + port (không có path). GitHub Pages: https://khaiminhvo.github.io
+var allowedOrigins = new[] { "http://localhost:5173", "https://khaiminhvo.github.io" };
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp",
-        policy => policy.WithOrigins("http://localhost:5173") // Cổng mặc định của Vite React
+        policy => policy.WithOrigins(allowedOrigins)
                         .AllowAnyMethod()
                         .AllowAnyHeader()
                         .AllowCredentials()); // Bắt buộc cho SignalR
