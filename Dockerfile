@@ -13,10 +13,11 @@ WORKDIR /app
 
 # Cài thư viện native cần thiết cho OpenCV/OpenCvSharp trên Linux
 RUN apt-get update && apt-get install -y \
-	libgl1-mesa-glx \
+	libgl1 \
 	libglib2.0-0 \
-	libgdiplus \
-	libc6-dev \
+	libsm6 \
+	libxext6 \
+	libxrender-dev \
 	&& rm -rf /var/lib/apt/lists/*
 
 COPY --from=publish /app/publish .
