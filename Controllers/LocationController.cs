@@ -27,7 +27,8 @@ namespace HcmcRainVision.Backend.Controllers
                 {
                     w.WardId,
                     w.WardName,
-                    w.DistrictName
+                    w.DistrictName,
+                    w.Alias
                 })
                 .ToListAsync();
 
@@ -46,6 +47,7 @@ namespace HcmcRainVision.Backend.Controllers
                     w.WardId,
                     w.WardName,
                     w.DistrictName,
+                    w.Alias,
                     w.CreatedAt,
                     w.UpdatedAt
                 })
@@ -86,7 +88,8 @@ namespace HcmcRainVision.Backend.Controllers
                 {
                     w.WardId,
                     w.WardName,
-                    w.DistrictName
+                    w.DistrictName,
+                    w.Alias
                 })
                 .ToListAsync();
 

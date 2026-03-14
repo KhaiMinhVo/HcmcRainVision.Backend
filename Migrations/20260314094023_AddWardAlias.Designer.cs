@@ -3,6 +3,7 @@ using System;
 using HcmcRainVision.Backend.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NetTopologySuite.Geometries;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HcmcRainVision.Backend.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260314094023_AddWardAlias")]
+    partial class AddWardAlias
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -323,12 +326,6 @@ namespace HcmcRainVision.Backend.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
-                    b.Property<Point>("LastKnownLocation")
-                        .HasColumnType("geometry");
-
-                    b.Property<DateTime?>("LocationUpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("text");
@@ -375,12 +372,6 @@ namespace HcmcRainVision.Backend.Migrations
                     b.Property<string>("CameraId")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<bool>("IsFlaggedForRetrain")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsVerifiedByLocation")
-                        .HasColumnType("boolean");
 
                     b.Property<string>("Note")
                         .HasColumnType("text");

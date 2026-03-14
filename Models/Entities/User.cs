@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using HcmcRainVision.Backend.Models.Constants;
+using NetTopologySuite.Geometries;
 
 namespace HcmcRainVision.Backend.Models.Entities
 {
@@ -37,6 +38,12 @@ namespace HcmcRainVision.Backend.Models.Entities
         // Token Firebase để gửi thông báo push
         [MaxLength(255)]
         public string? DeviceToken { get; set; }
+
+        // Lưu vị trí cuối cùng của user (WGS84 - SRID 4326)
+        public Point? LastKnownLocation { get; set; }
+
+        // Thời điểm cập nhật vị trí gần nhất
+        public DateTime? LocationUpdatedAt { get; set; }
 
         // 3. Quan hệ: Danh sách Camera yêu thích
         public ICollection<FavoriteCamera> FavoriteCameras { get; set; } = new List<FavoriteCamera>();

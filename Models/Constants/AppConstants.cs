@@ -88,5 +88,21 @@ namespace HcmcRainVision.Backend.Models.Constants
             /// </summary>
             public const string TestModeUrl = "TEST_MODE";
         }
+
+        /// <summary>
+        /// Hằng số cấu hình cho truy vấn không gian
+        /// </summary>
+        public static class GIS
+        {
+            /// <summary>
+            /// Bán kính cảnh báo xấp xỉ 2km quanh camera tại khu vực TP.HCM (đơn vị độ)
+            /// </summary>
+            public const double AlertRadiusDegrees = 0.018;
+
+            /// <summary>
+            /// Chỉ dùng vị trí user được cập nhật trong khung thời gian này (giờ)
+            /// </summary>
+            public const int LocationFreshnessHours = 2;
+        }
     }
 }

@@ -33,6 +33,9 @@ namespace HcmcRainVision.Backend.Controllers
         // Để chuẩn xác hơn, cần dùng hệ tọa độ phẳng (VN-2000/UTM) nhưng sẽ phức tạp hơn.
         private const double RAIN_ALERT_RADIUS_DEGREES = 0.009; // ~1km tại HCMC
 
+        // Hằng số: Bán kính xác thực báo cáo crowdsourcing (khoảng 500m)
+        private const double VERIFICATION_RADIUS_DEGREES = 0.005;
+
         public WeatherController(AppDbContext context)
         {
             _context = context;
@@ -77,28 +80,86 @@ namespace HcmcRainVision.Backend.Controllers
         }
 
         // API: POST api/weather/report
-        // Cho phép người dùng báo cáo khi AI nhận diện sai (Yêu cầu đăng nhập)
+        // Cho phép người dùng báo cáo khi AI nhận diện sai (Yêu cầu đăng nhập & xác thực GPS)
         [Authorize]
         [HttpPost("report")]
         public async Task<IActionResult> ReportIncorrectPrediction([FromBody] ReportDto input)
         {
-            // Lấy thông tin người dùng từ Token đang đăng nhập
             var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            int? userId = userIdStr != null ? int.Parse(userIdStr) : null;
+            if (string.IsNullOrEmpty(userIdStr)) return Unauthorized();
+            int userId = int.Parse(userIdStr);
 
+            // 1. Lấy thông tin User và Camera
+            var user = await _context.Users.FindAsync(userId);
+            var camera = await _context.Cameras.FindAsync(input.CameraId);
+
+            if (user == null) return Unauthorized();
+            if (camera == null) return NotFound("Không tìm thấy Camera");
+
+            bool isVerified = false;
+
+            // 2. Xác thực vị trí user theo geofence
+            var timeLimitForLocation = DateTime.UtcNow.AddMinutes(-30);
+
+            if (user.LastKnownLocation != null && user.LocationUpdatedAt >= timeLimitForLocation)
+            {
+                var cameraLocation = new Point(camera.Longitude, camera.Latitude) { SRID = 4326 };
+                double distance = user.LastKnownLocation.Distance(cameraLocation);
+
+                if (distance <= VERIFICATION_RADIUS_DEGREES)
+                {
+                    isVerified = true;
+                }
+            }
+
+            // 3. Lưu báo cáo
             var report = new UserReport 
             {
                 CameraId = input.CameraId,
                 UserClaimIsRaining = input.IsRaining,
                 Note = input.Note,
-                UserId = userId, // Lưu ID người dùng chuẩn chỉ
-                Timestamp = DateTime.UtcNow
+                UserId = userId,
+                Timestamp = DateTime.UtcNow,
+                IsVerifiedByLocation = isVerified
             };
 
             _context.UserReports.Add(report);
             await _context.SaveChangesAsync();
+
+            // 4. Cờ retrain khi có >= 3 báo cáo verified giống nhau trong 15 phút
+            if (isVerified)
+            {
+                var recentReportsTimeLimit = DateTime.UtcNow.AddMinutes(-15);
+                var similarVerifiedReportsCount = await _context.UserReports
+                    .Where(r => r.CameraId == input.CameraId
+                             && r.Timestamp >= recentReportsTimeLimit
+                             && r.IsVerifiedByLocation
+                             && r.UserClaimIsRaining == input.IsRaining)
+                    .CountAsync();
+
+                if (similarVerifiedReportsCount >= 3)
+                {
+                    var reportsToFlag = await _context.UserReports
+                        .Where(r => r.CameraId == input.CameraId
+                                 && r.Timestamp >= recentReportsTimeLimit
+                                 && r.IsVerifiedByLocation
+                                 && r.UserClaimIsRaining == input.IsRaining)
+                        .ToListAsync();
+
+                    foreach (var flaggedReport in reportsToFlag)
+                    {
+                        flaggedReport.IsFlaggedForRetrain = true;
+                    }
+
+                    await _context.SaveChangesAsync();
+                }
+            }
+
+            string responseMsg = isVerified
+                ? "Cảm ơn bạn! Báo cáo đã được hệ thống xác thực bằng GPS (Trusted)."
+                : "Cảm ơn đóng góp của bạn. Báo cáo đã được ghi nhận.";
             
-            return Ok(new { message = "Cảm ơn đóng góp của bạn!" });
+            return Ok(new { message = responseMsg, isVerified });
         }
 
         // API: POST api/weather/check-route

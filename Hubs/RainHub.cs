@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
 using HcmcRainVision.Backend.Models.Constants;
-using HcmcRainVision.Backend.Utils;
 
 namespace HcmcRainVision.Backend.Hubs
 {
@@ -29,24 +28,21 @@ namespace HcmcRainVision.Backend.Hubs
         }
 
         /// <summary>
-        /// Client gọi hàm này để tham gia nhóm theo Quận/District
-        /// Client có thể gửi "Quận 1", Server tự chuẩn hóa thành "quan_1"
+        /// Client gọi hàm này để tham gia nhóm theo Phường (WardId)
         /// </summary>
-        public async Task JoinDistrictGroup(string districtName)
+        public async Task JoinWardGroup(string wardId)
         {
-            var normalizedName = StringUtils.NormalizeCode(districtName);
-            await Groups.AddToGroupAsync(Context.ConnectionId, normalizedName);
-            _logger.LogInformation($"Client {Context.ConnectionId} joined district group: {normalizedName} (from: {districtName})");
+            await Groups.AddToGroupAsync(Context.ConnectionId, wardId);
+            _logger.LogInformation($"Client {Context.ConnectionId} joined ward group: {wardId}");
         }
 
         /// <summary>
-        /// Client rời khỏi nhóm District
+        /// Client rời khỏi nhóm Phường
         /// </summary>
-        public async Task LeaveDistrictGroup(string districtName)
+        public async Task LeaveWardGroup(string wardId)
         {
-            var normalizedName = StringUtils.NormalizeCode(districtName);
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, normalizedName);
-            _logger.LogInformation($"Client {Context.ConnectionId} left district group: {normalizedName}");
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, wardId);
+            _logger.LogInformation($"Client {Context.ConnectionId} left ward group: {wardId}");
         }
 
         /// <summary>

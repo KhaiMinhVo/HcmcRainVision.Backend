@@ -17,6 +17,9 @@ namespace HcmcRainVision.Backend.Models.Entities
         [MaxLength(100)]
         public string? DistrictName { get; set; } // VD: "Quận 1"
 
+        [MaxLength(200)]
+        public string? Alias { get; set; } // VD: "Gồm P.6, P.7, P.8 cũ"
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }

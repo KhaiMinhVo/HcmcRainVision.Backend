@@ -14,7 +14,29 @@ public static class TestDataSeeder
         // --- 0. MIGRATE DỮ LIỆU CŨ (Chạy trước khi seed) ---
         await MigrateOldData(context);
 
-        // 1. Seed Cameras (Nếu chưa có)
+        // --- 1. SEED WARDS ---
+        // Chỉ seed khi chưa có Ward nghiệp vụ (bỏ qua Ward DEFAULT do migrate tạo ra)
+        if (!await context.Wards.AnyAsync(w => w.WardId != "DEFAULT"))
+        {
+            Console.WriteLine("🏘️ Đang thêm dữ liệu Ward mẫu (Đã cập nhật theo hướng Phường)...");
+            var wards = new[]
+            {
+                new Ward { WardId = "W_THUTHIEM_TD", WardName = "Phường Thủ Thiêm", DistrictName = "TP. Thủ Đức", Alias = "Sáp nhập từ một phần khu đô thị Thủ Thiêm cũ" },
+                new Ward { WardId = "W_ANLOIDONG_TD", WardName = "Phường An Lợi Đông", DistrictName = "TP. Thủ Đức", Alias = "Khu vực An Lợi Đông cũ" },
+                new Ward { WardId = "W_THAODIEN_TD", WardName = "Phường Thảo Điền", DistrictName = "TP. Thủ Đức", Alias = "Khu vực Thảo Điền cũ" },
+                new Ward { WardId = "W_VTS_Q3", WardName = "Phường Võ Thị Sáu", DistrictName = "Quận 3", Alias = "Gồm P.6, P.7, P.8 cũ" },
+                new Ward { WardId = "W_BENNGHE_Q1", WardName = "Phường Bến Nghé", DistrictName = "Quận 1", Alias = "Khu vực trung tâm Q1" },
+                new Ward { WardId = "W_BENTHANH_Q1", WardName = "Phường Bến Thành", DistrictName = "Quận 1", Alias = "Khu vực chợ Bến Thành" },
+                new Ward { WardId = "W_KHANHHOI_Q4", WardName = "Phường Khánh Hội", DistrictName = "Quận 4", Alias = "Khu vực P.2, P.5 Q4 cũ" },
+                new Ward { WardId = "W_CHOQUAN_Q5", WardName = "Phường Chợ Quán", DistrictName = "Quận 5", Alias = "Khu vực P.1, P.2 Q5 cũ" }
+            };
+
+            await context.Wards.AddRangeAsync(wards);
+            await context.SaveChangesAsync();
+            Console.WriteLine($"✅ Đã thêm {wards.Length} wards cập nhật.");
+        }
+
+        // 2. Seed Cameras (Nếu chưa có)
         if (!context.Cameras.Any())
         {
             Console.WriteLine("📷 Đang thêm dữ liệu Camera mẫu...");
@@ -35,6 +57,7 @@ public static class TestDataSeeder
                     Name = "Ngã tư Lê Duẩn - Pasteur (Q1)",
                     Latitude = 10.7797, 
                     Longitude = 106.6990,
+                    WardId = "W_BENNGHE_Q1",
                     Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
@@ -43,6 +66,7 @@ public static class TestDataSeeder
                     Name = "Vòng xoay Quách Thị Trang (Q1)",
                     Latitude = 10.7712, 
                     Longitude = 106.6983,
+                    WardId = "W_BENTHANH_Q1",
                     Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
@@ -51,6 +75,7 @@ public static class TestDataSeeder
                     Name = "Ngã tư CMT8 - Cách Mạng Tháng 8 (Q3)",
                     Latitude = 10.7785, 
                     Longitude = 106.6897,
+                    WardId = "W_VTS_Q3",
                     Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
@@ -59,6 +84,7 @@ public static class TestDataSeeder
                     Name = "Chợ An Đông (Q5)",
                     Latitude = 10.7550, 
                     Longitude = 106.6520,
+                    WardId = "W_CHOQUAN_Q5",
                     Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
@@ -67,6 +93,7 @@ public static class TestDataSeeder
                     Name = "Phú Mỹ Hưng (Q7)",
                     Latitude = 10.7290, 
                     Longitude = 106.7200,
+                    WardId = "W_THUTHIEM_TD",
                     Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
@@ -75,6 +102,7 @@ public static class TestDataSeeder
                     Name = "Cầu Bình Triệu (Bình Tân)",
                     Latitude = 10.8000, 
                     Longitude = 106.6300,
+                    WardId = "W_KHANHHOI_Q4",
                     Status = nameof(CameraStatus.Active)
                 },
                 new Camera 
@@ -83,6 +111,7 @@ public static class TestDataSeeder
                     Name = "Sân bay Tân Sơn Nhất (Tân Bình)",
                     Latitude = 10.8185, 
                     Longitude = 106.6595,
+                    WardId = "W_BENNGHE_Q1",
                     Status = nameof(CameraStatus.Active)
                 },
                 // Camera TEST MODE (fallback khi không có camera thật)
@@ -92,6 +121,7 @@ public static class TestDataSeeder
                     Name = "Camera Test Mode (Bến Thành)",
                     Latitude = 10.762622, 
                     Longitude = 106.660172,
+                    WardId = "W_BENTHANH_Q1",
                     Status = nameof(CameraStatus.Active)
                 }
             };
@@ -116,7 +146,7 @@ public static class TestDataSeeder
             Console.WriteLine($"✅ Đã thêm {streams.Length} camera streams.");
         }
 
-        // 2. Seed WeatherLogs (Nếu chưa có)
+        // 3. Seed WeatherLogs (Nếu chưa có)
         if (context.WeatherLogs.Any())
         {
             Console.WriteLine("✅ Database đã có dữ liệu WeatherLogs, bỏ qua seeding.");
@@ -167,7 +197,7 @@ public static class TestDataSeeder
             Console.WriteLine($"✅ Đã thêm {testData.Length} bản ghi test vào database.");
         }
 
-        // --- 3. SEED USER ADMIN (MỚI) ---
+        // --- 4. SEED USER ADMIN (MỚI) ---
         // Kiểm tra xem đã có admin chưa, nếu chưa thì tạo
         if (!context.Users.Any(u => u.Role == AppConstants.UserRoles.Admin))
         {
@@ -190,22 +220,6 @@ public static class TestDataSeeder
             await context.SaveChangesAsync();
             
             Console.WriteLine("✅ Đã tạo User: admin / admin123");
-        }
-
-        // --- 4. SEED WARDS (MỚI) ---
-        if (!context.Wards.Any())
-        {
-            Console.WriteLine("🏘️ Đang thêm dữ liệu Ward mẫu...");
-            var wards = new[]
-            {
-                new Ward { WardId = "BN_Q1", WardName = "Phường Bến Nghé", DistrictName = "Quận 1" },
-                new Ward { WardId = "BT_Q1", WardName = "Phường Bến Thành", DistrictName = "Quận 1" },
-                new Ward { WardId = "VTS_Q3", WardName = "Phường Võ Thị Sáu", DistrictName = "Quận 3" },
-                new Ward { WardId = "TD_TPTD", WardName = "Phường Thảo Điền", DistrictName = "TP. Thủ Đức" }
-            };
-            await context.Wards.AddRangeAsync(wards);
-            await context.SaveChangesAsync();
-            Console.WriteLine($"✅ Đã thêm {wards.Length} wards.");
         }
     }
 

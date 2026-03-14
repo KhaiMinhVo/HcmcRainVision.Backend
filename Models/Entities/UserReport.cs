@@ -17,5 +17,11 @@ namespace HcmcRainVision.Backend.Models.Entities
         
         [ForeignKey("UserId")]
         public User? User { get; set; }
+
+        // Đánh dấu True nếu hệ thống xác nhận user đang gần camera tại thời điểm báo cáo
+        public bool IsVerifiedByLocation { get; set; } = false;
+
+        // Đánh dấu True nếu báo cáo đủ tin cậy để đưa vào luồng retrain AI
+        public bool IsFlaggedForRetrain { get; set; } = false;
     }
 }

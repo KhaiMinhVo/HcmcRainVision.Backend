@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using NetTopologySuite.Geometries;
 
 namespace HcmcRainVision.Backend.Controllers
 {
@@ -203,6 +204,26 @@ namespace HcmcRainVision.Backend.Controllers
             await _context.SaveChangesAsync();
 
             return Ok(new { message = "Đổi mật khẩu thành công!" });
+        }
+
+        [Authorize]
+        [HttpPost("location")]
+        public async Task<IActionResult> UpdateLocation([FromBody] UpdateLocationDto request)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null) return Unauthorized();
+
+            user.LastKnownLocation = new Point(request.Longitude, request.Latitude) { SRID = 4326 };
+            user.LocationUpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Cập nhật vị trí thành công" });
         }
     }
 }

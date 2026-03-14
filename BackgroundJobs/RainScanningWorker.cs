@@ -6,7 +6,6 @@ using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.Notification;
 using HcmcRainVision.Backend.Models.Enums;
 using HcmcRainVision.Backend.Models.Constants;
-using HcmcRainVision.Backend.Utils;
 using HcmcRainVision.Backend.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -301,9 +300,9 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     if (shouldNotify)
                     {
                         // Gửi Firebase Push Notification (tối ưu với Dictionary)
-                        await SendNotificationsOptimizedAsync(stream, prediction.Confidence, subsByWard, firebaseService);
+                        await SendNotificationsOptimizedAsync(stream, prediction.Confidence, subsByWard, firebaseService, db);
                         
-                        // GỬI SIGNALR (REAL-TIME CHO WEB) - Gửi theo Group Quận
+                        // GỬI SIGNALR (REAL-TIME CHO WEB) - Gửi theo Group Phường
                         var alertData = new 
                         {
                             CameraId = stream.CameraId,
@@ -319,13 +318,12 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         await _hubContext.Clients.Group(AppConstants.SignalRGroups.Dashboard)
                             .SendAsync(AppConstants.SignalRGroups.ReceiveRainAlertMethod, alertData, token);
                         
-                        // Gửi cho Group Quận cụ thể (chuẩn hóa tên)
-                        if (!string.IsNullOrEmpty(stream.Camera.Ward?.DistrictName))
+                        // Gửi cho Group Phường cụ thể (WardId)
+                        if (!string.IsNullOrEmpty(stream.Camera.WardId))
                         {
-                            var normalizedDistrictName = StringUtils.NormalizeCode(stream.Camera.Ward.DistrictName);
-                            await _hubContext.Clients.Group(normalizedDistrictName)
+                            await _hubContext.Clients.Group(stream.Camera.WardId)
                                 .SendAsync(AppConstants.SignalRGroups.ReceiveRainAlertMethod, alertData, token);
-                            _logger.LogDebug($"📡 Gửi SignalR tới group: {normalizedDistrictName}");
+                            _logger.LogDebug($"📡 Gửi SignalR tới group Phường: {stream.Camera.WardId}");
                         }
                         
                         _logger.LogInformation($"📡 Đã gửi SignalR alert cho camera {stream.Camera.Name}");
@@ -384,40 +382,66 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             CameraStream stream, 
             float confidence, 
             Dictionary<string, List<AlertSubscription>> subsByWard,
-            IFirebasePushService firebase)
+            IFirebasePushService firebase,
+            AppDbContext db)
         {
-            if (stream.Camera.WardId == null || !subsByWard.ContainsKey(stream.Camera.WardId)) return;
-
-            var subscriptions = subsByWard[stream.Camera.WardId];
             string timeStr = DateTime.UtcNow.AddHours(7).ToString("HH:mm"); // Giờ VN
+            var validTokens = new HashSet<string>();
 
-            // 1. Lọc ra danh sách Token cần gửi (đạt ngưỡng confidence và có device token)
-            var validTokens = subscriptions
-                .Where(s => confidence >= s.ThresholdProbability && !string.IsNullOrEmpty(s.User.DeviceToken))
-                .Select(s => s.User.DeviceToken!)
-                .Distinct() // Tránh gửi trùng nếu 1 user đăng ký 2 lần
-                .ToList();
+            // 1. Gom token từ đăng ký theo phường
+            if (stream.Camera.WardId != null && subsByWard.ContainsKey(stream.Camera.WardId))
+            {
+                var wardTokens = subsByWard[stream.Camera.WardId]
+                    .Where(s => confidence >= s.ThresholdProbability && !string.IsNullOrEmpty(s.User.DeviceToken))
+                    .Select(s => s.User.DeviceToken!);
+
+                foreach (var token in wardTokens)
+                {
+                    validTokens.Add(token);
+                }
+            }
+
+            // 2. Gom thêm token theo vị trí gần camera (spatial query)
+            var cameraPoint = new NetTopologySuite.Geometries.Point(stream.Camera.Longitude, stream.Camera.Latitude) { SRID = 4326 };
+            var timeLimit = DateTime.UtcNow.AddHours(-AppConstants.GIS.LocationFreshnessHours);
+
+            var nearbyUserTokens = await db.Users
+                .Where(u => !string.IsNullOrEmpty(u.DeviceToken)
+                         && u.IsActive
+                         && u.LocationUpdatedAt >= timeLimit
+                         && u.LastKnownLocation != null
+                         && u.LastKnownLocation!.Distance(cameraPoint) <= AppConstants.GIS.AlertRadiusDegrees)
+                .Select(u => u.DeviceToken!)
+                .ToListAsync();
+
+            foreach (var token in nearbyUserTokens)
+            {
+                validTokens.Add(token);
+            }
 
             if (validTokens.Any())
             {
+                var tokenList = validTokens.ToList();
+
                 // 2. Gửi Batch (Fire and forget - không chặn worker thread)
                 _ = Task.Run(async () =>
                 {
                     try
                     {
                         int sentCount = await firebase.SendMulticastAsync(
-                            validTokens,
-                            "Cảnh báo mưa! 🌧️",
-                            $"Mưa tại {stream.Camera.Name} lúc {timeStr}",
+                            tokenList,
+                            "⚠️ Cảnh báo mưa gần bạn!",
+                            $"Phát hiện mưa tại {stream.Camera.Name} lúc {timeStr}. Hãy chú ý an toàn!",
                             new Dictionary<string, string>
                             {
                                 { "cameraId", stream.CameraId },
                                 { "cameraName", stream.Camera.Name },
                                 { "confidence", confidence.ToString("F2") },
-                                { "timestamp", DateTime.UtcNow.ToString("o") }
+                                { "timestamp", DateTime.UtcNow.ToString("o") },
+                                { "type", "location_based_alert" }
                             }
                         );
-                        _logger.LogInformation($"📱 Đã gửi push notification hàng loạt: {sentCount}/{validTokens.Count} thành công");
+                        _logger.LogInformation($"📱 Đã gửi push notification hàng loạt: {sentCount}/{tokenList.Count} thành công");
                     }
                     catch (Exception ex)
                     {
