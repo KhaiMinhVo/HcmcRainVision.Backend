@@ -10,6 +10,15 @@ RUN dotnet publish "HcmcRainVision.Backend.csproj" -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 WORKDIR /app
+
+# Cài thư viện native cần thiết cho OpenCV/OpenCvSharp trên Linux
+RUN apt-get update && apt-get install -y \
+	libgl1-mesa-glx \
+	libglib2.0-0 \
+	libgdiplus \
+	libc6-dev \
+	&& rm -rf /var/lib/apt/lists/*
+
 COPY --from=publish /app/publish .
 RUN mkdir -p wwwroot/images/rain_logs
 EXPOSE 8080
