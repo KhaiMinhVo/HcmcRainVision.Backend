@@ -5,6 +5,9 @@ using NetTopologySuite.Geometries;
 using System.Security.Claims;
 using HcmcRainVision.Backend.Data;
 using HcmcRainVision.Backend.Models.Entities;
+using HcmcRainVision.Backend.Services.AI;
+using HcmcRainVision.Backend.Services.ImageProcessing;
+using Microsoft.AspNetCore.Http;
 
 namespace HcmcRainVision.Backend.Controllers
 {
@@ -68,6 +71,35 @@ namespace HcmcRainVision.Backend.Controllers
             });
 
             return Ok(result);
+        }
+
+        // API: POST api/weather/test-ai
+        // Test nhanh model AI bằng cách upload ảnh trực tiếp từ Swagger/UI
+        [HttpPost("test-ai")]
+        public async Task<IActionResult> TestAiDirectly(
+            [FromForm] IFormFile imageFile,
+            [FromServices] IRainPredictionService aiService,
+            [FromServices] IImagePreProcessor imagePreProcessor)
+        {
+            if (imageFile == null || imageFile.Length == 0)
+            {
+                return BadRequest("Vui lòng tải lên một bức ảnh.");
+            }
+
+            using var ms = new MemoryStream();
+            await imageFile.CopyToAsync(ms);
+            byte[] rawBytes = ms.ToArray();
+
+            byte[] processedBytes = imagePreProcessor.ProcessForAI(rawBytes) ?? rawBytes;
+            var result = aiService.Predict(processedBytes);
+
+            return Ok(new
+            {
+                Message = "Du doan tu AI Model thuc te",
+                Prediction = result.IsRaining ? "CO MUA" : "KHONG MUA",
+                ConfidenceScore = Math.Round(result.Confidence * 100, 2) + " %",
+                IsAIWorking = true
+            });
         }
 
         // Hàm phụ trợ tính thời gian (VD: "5 phút trước")
