@@ -18,7 +18,10 @@ RUN apt-get update && apt-get install -y \
 	libsm6 \
 	libxext6 \
 	libxrender-dev \
+	tzdata \
 	&& rm -rf /var/lib/apt/lists/*
+
+ENV TZ="Asia/Ho_Chi_Minh"
 
 COPY --from=publish /app/publish .
 RUN mkdir -p wwwroot/images/rain_logs
