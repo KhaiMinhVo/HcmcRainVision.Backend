@@ -11,6 +11,8 @@ using Microsoft.Extensions.ML;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using System.Text;
 
 // ===================================================================
@@ -140,7 +142,8 @@ builder.Services.AddSignalR();
 
 // 8.1. Đăng ký Health Checks
 builder.Services.AddHealthChecks()
-    .AddNpgSql(connectionString!); // Check kết nối DB
+    .AddCheck("self", () => HealthCheckResult.Healthy("Service is alive"), tags: new[] { "live" })
+    .AddNpgSql(connectionString!, tags: new[] { "ready" }); // Check kết nối DB cho readiness
 
 // 9. Cấu hình CORS (Để React gọi được API + SignalR)
 // Origin = scheme + host + port (không có path). GitHub Pages: https://khaiminhvo.github.io
@@ -194,6 +197,17 @@ app.MapControllers();
 app.MapHub<RainHub>("/rainHub");
 
 // Đăng ký Health Check endpoint
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("live")
+});
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+});
+
+// Giữ endpoint cũ để tương thích ngược
 app.MapHealthChecks("/health");
 
 app.Run();
