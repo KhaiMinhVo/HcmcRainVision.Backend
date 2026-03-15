@@ -54,8 +54,9 @@ builder.Services.AddSingleton<ICloudStorageService, CloudStorageService>();
 builder.Services.AddHostedService<RainScanningWorker>();
 
 // 5. Đăng ký AI Service thật bằng ML.NET
+var modelFilePath = Path.Combine(builder.Environment.ContentRootPath, "MLModels", "RainModel.zip");
 builder.Services.AddPredictionEnginePool<ModelInput, ModelOutput>()
-    .FromFile(modelName: "RainModel", filePath: "MLModels/RainModel.zip", watchForChanges: true);
+    .FromFile(modelName: "RainModel", filePath: modelFilePath, watchForChanges: true);
 builder.Services.AddScoped<IRainPredictionService, MlRainPredictionService>();
 
 // 6. Đăng ký Email Service

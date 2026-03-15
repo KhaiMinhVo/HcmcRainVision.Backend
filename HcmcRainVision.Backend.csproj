@@ -36,8 +36,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="RainAnalysisModel.zip">
+    <None Update="MLModels\RainModel.zip">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
     <None Update="sample_rain.jpg">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
