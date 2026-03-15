@@ -50,7 +50,7 @@ namespace HcmcRainVision.Backend.Services.AI
                 { 
                     IsRaining = false, 
                     Confidence = 0, 
-                    Message = "Error" 
+                    Message = $"Error: {ex.GetType().Name}" 
                 };
             }
         }

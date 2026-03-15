@@ -23,6 +23,12 @@ namespace HcmcRainVision.Backend.Controllers
         public double Lat { get; set; }
         public double Lng { get; set; }
     }
+
+    public class TestAiRequest
+    {
+        public IFormFile? ImageFile { get; set; }
+    }
+
     [ApiController]
     [Route("api/[controller]")]
     public class WeatherController : ControllerBase
@@ -76,11 +82,13 @@ namespace HcmcRainVision.Backend.Controllers
         // API: POST api/weather/test-ai
         // Test nhanh model AI bằng cách upload ảnh trực tiếp từ Swagger/UI
         [HttpPost("test-ai")]
+        [Consumes("multipart/form-data")]
         public async Task<IActionResult> TestAiDirectly(
-            [FromForm] IFormFile imageFile,
+            [FromForm] TestAiRequest request,
             [FromServices] IRainPredictionService aiService,
             [FromServices] IImagePreProcessor imagePreProcessor)
         {
+            var imageFile = request.ImageFile;
             if (imageFile == null || imageFile.Length == 0)
             {
                 return BadRequest("Vui lòng tải lên một bức ảnh.");
@@ -92,6 +100,16 @@ namespace HcmcRainVision.Backend.Controllers
 
             byte[] processedBytes = imagePreProcessor.ProcessForAI(rawBytes) ?? rawBytes;
             var result = aiService.Predict(processedBytes);
+
+            if (!string.IsNullOrEmpty(result.Message) && result.Message.StartsWith("Error", StringComparison.OrdinalIgnoreCase))
+            {
+                return StatusCode(500, new
+                {
+                    Message = "AI model dang gap loi khi du doan.",
+                    TechnicalMessage = result.Message,
+                    IsAIWorking = false
+                });
+            }
 
             return Ok(new
             {

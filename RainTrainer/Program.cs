@@ -34,7 +34,26 @@ namespace RainTrainer
             }
             
             Console.WriteLine("1. Đang nạp ảnh từ thư mục...");
-            var images = LoadImagesFromFolder(datasetFolder);
+            var images = LoadImagesFromFolder(datasetFolder).ToList();
+
+            if (images.Count == 0)
+            {
+                Console.WriteLine("❌ Không tìm thấy ảnh hợp lệ (Rain/NoRain) để huấn luyện.");
+                return;
+            }
+
+            var rainCount = images.Count(x => x.Label.Equals("Rain", StringComparison.OrdinalIgnoreCase));
+            var noRainCount = images.Count(x => x.Label.Equals("NoRain", StringComparison.OrdinalIgnoreCase));
+
+            Console.WriteLine($"   - Rain: {rainCount} ảnh");
+            Console.WriteLine($"   - NoRain: {noRainCount} ảnh");
+
+            if (rainCount == 0 || noRainCount == 0)
+            {
+                Console.WriteLine("❌ Dataset thiếu 1 trong 2 nhãn Rain/NoRain. Không thể train mô hình phân loại đúng.");
+                return;
+            }
+
             var trainData = mlContext.Data.LoadFromEnumerable(images);
 
             // Xáo trộn dữ liệu để AI học đều hơn
@@ -45,7 +64,7 @@ namespace RainTrainer
                 .Append(mlContext.MulticlassClassification.Trainers.ImageClassification(
                     featureColumnName: "Image",
                     labelColumnName: "LabelAsKey"))
-                .Append(mlContext.Transforms.Conversion.MapKeyToValue("PredictedLabel", "LabelAsKey"));
+                .Append(mlContext.Transforms.Conversion.MapKeyToValue("PredictedLabel"));
 
             Console.WriteLine("3. Bắt đầu huấn luyện AI (Sẽ mất vài phút)...");
             var model = pipeline.Fit(shuffledData);
@@ -67,7 +86,14 @@ namespace RainTrainer
             foreach (var file in files)
             {
                 var parentDir = Directory.GetParent(file);
-                var label = parentDir?.Name ?? "Unknown";
+                var label = parentDir?.Name ?? string.Empty;
+
+                // Chỉ nhận đúng 2 class để tránh model học thêm nhãn rác như Unknown.
+                if (!label.Equals("Rain", StringComparison.OrdinalIgnoreCase) &&
+                    !label.Equals("NoRain", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
 
                 yield return new ModelInput 
                 { 
