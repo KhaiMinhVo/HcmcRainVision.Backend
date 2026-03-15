@@ -8,6 +8,7 @@ namespace HcmcRainVision.Backend.Services.AI
     /// </summary>
     public class MlRainPredictionService : IRainPredictionService
     {
+        private const string ModelName = "RainModel";
         private readonly PredictionEnginePool<ModelInput, ModelOutput> _predictionEnginePool;
         private readonly ILogger<MlRainPredictionService> _logger;
 
@@ -27,7 +28,7 @@ namespace HcmcRainVision.Backend.Services.AI
                 var input = new ModelInput { Image = imageBytes };
                 
                 // PredictionEnginePool tự xử lý thread-safe
-                var result = _predictionEnginePool.Predict(input);
+                var result = _predictionEnginePool.Predict(ModelName, input);
 
                 // Giả sử nhãn của bạn là "Rain" và "NoRain"
                 bool isRaining = result.Prediction?.Equals("Rain", StringComparison.OrdinalIgnoreCase) ?? false;
