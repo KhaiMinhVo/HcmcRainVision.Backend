@@ -8,5 +8,16 @@
     "SenderName": "HCMC Rain Vision Alert",
     "SenderEmail": "your-actual-email@example.com",
     "Password": "your-actual-app-password"
+  },
+  "ChatbotLlm": {
+    "Enabled": false,
+    "BaseUrl": "https://api.openai.com/v1",
+    "Model": "gpt-4o-mini",
+    "ApiKey": "",
+    "TimeoutSeconds": 20
+  },
+
+  "GoogleMaps": {
+    "ApiKey": "YOUR_GOOGLE_MAPS_API_KEY"
   }
 }

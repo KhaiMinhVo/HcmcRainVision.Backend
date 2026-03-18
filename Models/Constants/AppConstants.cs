@@ -28,6 +28,26 @@ namespace HcmcRainVision.Backend.Models.Constants
             /// Phương thức SignalR để gửi alert xuống client
             /// </summary>
             public const string ReceiveRainAlertMethod = "ReceiveRainAlert";
+
+            /// <summary>
+            /// Prefix cho nhóm theo dõi mưa theo route
+            /// </summary>
+            public const string RouteGroupPrefix = "Route:";
+
+            /// <summary>
+            /// Sự kiện cập nhật rủi ro mưa theo route
+            /// </summary>
+            public const string ReceiveRouteRainUpdateMethod = "ReceiveRouteRainUpdate";
+
+            /// <summary>
+            /// Sự kiện ACK khi bật theo dõi route thành công
+            /// </summary>
+            public const string RouteMonitoringStartedMethod = "RouteMonitoringStarted";
+
+            /// <summary>
+            /// Sự kiện ACK khi tắt theo dõi route
+            /// </summary>
+            public const string RouteMonitoringStoppedMethod = "RouteMonitoringStopped";
         }
 
         /// <summary>

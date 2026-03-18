@@ -36,7 +36,7 @@ namespace HcmcRainVision.Backend.Services.Crawling
             // 1. Chế độ giả lập (Dành cho lúc test hoặc API thật bị sập)
             if (url.StartsWith(AppConstants.Camera.TestModeUrl))
             {
-                return await GetFakeImageAsync(); 
+                return await GetFakeImageAsync(url);
             }
 
             // 2. Tạo Named Client từ Factory (Polly sẽ tự động retry)
@@ -69,18 +69,39 @@ namespace HcmcRainVision.Backend.Services.Crawling
             }
         }
 
-        // Hàm giả lập ảnh (Load 1 ảnh có sẵn trong thư mục dự án)
-        private async Task<byte[]> GetFakeImageAsync()
+        // Hàm giả lập ảnh:
+        // - TEST_MODE => dùng sample_rain.jpg
+        // - TEST_MODE:tenfile.jpg => dùng file trong wwwroot/images/demo-cameras
+        private async Task<byte[]> GetFakeImageAsync(string streamUrl)
         {
             _logger.LogInformation("--- TEST MODE: Đang dùng ảnh giả lập ---");
-            // Bạn hãy để 1 file ảnh tên 'sample_rain.jpg' vào thư mục gốc của dự án
-            var path = Path.Combine(_env.ContentRootPath, "sample_rain.jpg");
+            var defaultPath = Path.Combine(_env.ContentRootPath, "sample_rain.jpg");
+            var path = defaultPath;
+
+            // Hỗ trợ format TEST_MODE:filename.jpg để test linh hoạt theo camera
+            var parts = streamUrl.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[1]))
+            {
+                var safeFileName = Path.GetFileName(parts[1]);
+                if (!string.IsNullOrWhiteSpace(safeFileName))
+                {
+                    path = Path.Combine(_env.WebRootPath, "images", "demo-cameras", safeFileName);
+                }
+            }
             
             if (File.Exists(path))
             {
                 return await File.ReadAllBytesAsync(path);
             }
-            return new byte[0]; // Trả về rỗng nếu không tìm thấy
+
+            if (File.Exists(defaultPath))
+            {
+                _logger.LogWarning($"Không tìm thấy ảnh test '{path}', fallback về sample_rain.jpg");
+                return await File.ReadAllBytesAsync(defaultPath);
+            }
+
+            _logger.LogWarning($"Không tìm thấy ảnh test mode: {path}");
+            return Array.Empty<byte>();
         }
     }
 }

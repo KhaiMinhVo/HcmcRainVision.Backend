@@ -414,6 +414,10 @@ namespace HcmcRainVision.Backend.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("alias");
 
+                    b.Property<int?>("ClusterNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("cluster_number");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -421,7 +425,7 @@ namespace HcmcRainVision.Backend.Migrations
                     b.Property<string>("DistrictName")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
-                        .HasColumnName("district_name");
+                        .HasColumnName("cluster_name");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")

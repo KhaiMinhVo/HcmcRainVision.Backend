@@ -4,6 +4,7 @@ using HcmcRainVision.Backend.Services.Crawling;
 using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.AI;
 using HcmcRainVision.Backend.Services.Notification;
+using HcmcRainVision.Backend.Services.Chatbot;
 using HcmcRainVision.Backend.Hubs;
 using HcmcRainVision.Backend;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using System.Text;
+using HcmcRainVision.Backend.Swagger;
 
 // ===================================================================
 // HCMC Rain Vision Backend API
@@ -33,7 +35,14 @@ builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, relo
 // 1. Đăng ký Database (PostgreSQL)
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString, o => o.UseNetTopologySuite())); // Quan trọng: Kích hoạt GIS
+{
+    // Increase command timeout to 60 seconds (default is 30s) to avoid cancellation errors
+    options.UseNpgsql(connectionString, npgsqlOptions => 
+    {
+        npgsqlOptions.UseNetTopologySuite();
+        npgsqlOptions.CommandTimeout(60);
+    });
+});
 
 // 2. Đăng ký HttpClient Factory với Polly Resilience
 builder.Services.AddHttpClient("CameraClient", client =>
@@ -51,6 +60,43 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<ICameraCrawler, CameraCrawler>();
 builder.Services.AddSingleton<IImagePreProcessor, ImagePreProcessor>();
 builder.Services.AddSingleton<ICloudStorageService, CloudStorageService>();
+builder.Services.AddScoped<IRainAssistantService, RainAssistantService>();
+builder.Services.AddScoped<IChatbotService, ChatbotService>();
+builder.Services.AddSingleton<RouteMonitoringRegistry>();
+builder.Services.AddHostedService<RouteRainMonitoringWorker>();
+
+builder.Services.Configure<ChatbotLlmOptions>(builder.Configuration.GetSection("ChatbotLlm"));
+builder.Services.AddHttpClient<ILlmIntentService, OpenAiFunctionCallingIntentService>((serviceProvider, client) =>
+{
+    var llmOptions = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<ChatbotLlmOptions>>().Value;
+    client.Timeout = TimeSpan.FromSeconds(Math.Max(5, llmOptions.TimeoutSeconds));
+});
+
+// Đăng ký Route Planning service: dùng Google Maps nếu có API key, fallback về OSRM
+var googleMapsApiKey = builder.Configuration["GoogleMaps:ApiKey"];
+if (!string.IsNullOrWhiteSpace(googleMapsApiKey))
+{
+    builder.Services.AddHttpClient<IRoutePlanningService, GoogleMapsRoutePlanningService>(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(20);
+    });
+}
+else
+{
+    builder.Services.AddHttpClient<IRoutePlanningService, OsrmRoutePlanningService>(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(20);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("HcmcRainVisionBot/1.0");
+    });
+}
+
+// 4. Đăng ký Background Worker (Chạy ngầm)
+// Đăng ký Geocoding Service để convert tên địa chỉ → lat/lng
+builder.Services.AddHttpClient<IGeocodingService, GeocodingService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("HcmcRainVisionBot/1.0");
+});
 
 // 4. Đăng ký Background Worker (Chạy ngầm)
 builder.Services.AddHostedService<RainScanningWorker>();
@@ -111,6 +157,8 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
+    options.SchemaFilter<RequestExampleSchemaFilter>();
+
     options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
     {
         Name = "Authorization",

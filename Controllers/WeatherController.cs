@@ -8,6 +8,8 @@ using HcmcRainVision.Backend.Models.Entities;
 using HcmcRainVision.Backend.Services.AI;
 using HcmcRainVision.Backend.Services.ImageProcessing;
 using Microsoft.AspNetCore.Http;
+using HcmcRainVision.Backend.Services.Chatbot;
+using HcmcRainVision.Backend.Models.DTOs;
 
 namespace HcmcRainVision.Backend.Controllers
 {
@@ -17,11 +19,6 @@ namespace HcmcRainVision.Backend.Controllers
         public string CameraId { get; set; } = null!;
         public bool IsRaining { get; set; }
         public string? Note { get; set; }
-    }
-    public class RoutePointDto
-    {
-        public double Lat { get; set; }
-        public double Lng { get; set; }
     }
 
     public class TestAiRequest
@@ -34,20 +31,29 @@ namespace HcmcRainVision.Backend.Controllers
     public class WeatherController : ControllerBase
     {
         private readonly AppDbContext _context;
+        private readonly IRoutePlanningService _routePlanningService;
 
         // Hằng số: Bán kính cảnh báo mưa (đơn vị: độ trong WGS84)
         // 0.009 độ ≈ 1km tại TP.HCM (vĩ độ ~10.8°)
         // LƯU Ý: Trong hệ tọa độ WGS84 (Lat/Long), Buffer tạo ra hình ellipse chứ không phải hình tròn đều
         // do kinh độ co lại khi lên cao vĩ độ. Với TP.HCM (gần xích đạo), sai số nhỏ và chấp nhận được.
         // Để chuẩn xác hơn, cần dùng hệ tọa độ phẳng (VN-2000/UTM) nhưng sẽ phức tạp hơn.
+        // Hằng số: Bán kính cảnh báo mưa (đơn vị: độ trong WGS84)
+        // 0.009 độ ≈ 1km tại TP.HCM (vĩ độ ~10.8°)
         private const double RAIN_ALERT_RADIUS_DEGREES = 0.009; // ~1km tại HCMC
+
+        // Bán kính đánh giá độ phủ dữ liệu quanh điểm đến (~3km)
+        private const double DESTINATION_COVERAGE_RADIUS_DEGREES = 0.027;
 
         // Hằng số: Bán kính xác thực báo cáo crowdsourcing (khoảng 500m)
         private const double VERIFICATION_RADIUS_DEGREES = 0.005;
 
-        public WeatherController(AppDbContext context)
+        public WeatherController(
+            AppDbContext context,
+            IRoutePlanningService routePlanningService)
         {
             _context = context;
+            _routePlanningService = routePlanningService;
         }
 
         // API: GET api/weather/latest
@@ -213,12 +219,138 @@ namespace HcmcRainVision.Backend.Controllers
         }
 
         // API: POST api/weather/check-route
-        // Kiểm tra xem một lộ trình đi có cắt qua vùng đang mưa không
+        // Kiểm tra xem một lộ trình đi có cắt qua vùng đang mưa không.
+        // LƯU Ý: API này KHÔNG tự geocode theo tên nữa, chỉ nhận dữ liệu tọa độ.
         [HttpPost("check-route")]
-        public async Task<IActionResult> CheckRouteSafety([FromBody] List<RoutePointDto> routePoints)
+        public async Task<IActionResult> CheckRouteSafety([FromBody] CheckRouteRequest request, CancellationToken cancellationToken)
         {
-            if (routePoints == null || routePoints.Count < 2)
-                return BadRequest("Lộ trình cần ít nhất 2 điểm.");
+            if (request == null)
+                return BadRequest("Request không hợp lệ");
+
+            var routePoints = request.RoutePoints
+                .Where(p => IsUsableCoordinate(p.Lat, p.Lng))
+                .ToList();
+
+            var hasExplicitOrigin = IsUsableDeviceCoordinate(request.OriginLatitude, request.OriginLongitude)
+                || routePoints.Count >= 2;
+            var hasExplicitDestination = IsUsableDeviceCoordinate(request.DestinationLatitude, request.DestinationLongitude)
+                || routePoints.Count >= 2;
+            var hasCurrentGpsOrigin = IsUsableDeviceCoordinate(request.CurrentLatitude, request.CurrentLongitude);
+
+            var modeUsed = (hasExplicitOrigin && hasExplicitDestination) || routePoints.Count >= 2
+                ? "origin_destination_selected"
+                : "gps_to_destination";
+
+            RoutePointDto? resolvedOriginPoint = null;
+            RoutePointDto? resolvedDestinationPoint = null;
+
+            try
+            {
+                RoutePointDto? originPoint = null;
+                RoutePointDto? destinationPoint = null;
+
+                // Ưu tiên 1: Origin do FE chọn pin/toạ độ trực tiếp (Google Maps style)
+                if (IsUsableDeviceCoordinate(request.OriginLatitude, request.OriginLongitude))
+                {
+                    originPoint = new RoutePointDto
+                    {
+                        Lat = request.OriginLatitude.GetValueOrDefault(),
+                        Lng = request.OriginLongitude.GetValueOrDefault()
+                    };
+                }
+                // Ưu tiên 2: GPS hiện tại từ thiết bị
+                else if (IsUsableDeviceCoordinate(request.CurrentLatitude, request.CurrentLongitude))
+                {
+                    var currentLat = request.CurrentLatitude.GetValueOrDefault();
+                    var currentLng = request.CurrentLongitude.GetValueOrDefault();
+
+                    originPoint = new RoutePointDto
+                    {
+                        Lat = currentLat,
+                        Lng = currentLng
+                    };
+                }
+                // Ưu tiên 3: vị trí lưu gần nhất của user (nếu đã đăng nhập)
+                else
+                {
+                    var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                    if (int.TryParse(userIdStr, out var userId))
+                    {
+                        var userLocation = await _context.Users
+                            .AsNoTracking()
+                            .Where(u => u.Id == userId && u.LastKnownLocation != null)
+                            .Select(u => new { u.LastKnownLocation, u.LocationUpdatedAt })
+                            .FirstOrDefaultAsync(cancellationToken);
+
+                        if (userLocation?.LastKnownLocation != null)
+                        {
+                            originPoint = new RoutePointDto
+                            {
+                                Lat = userLocation.LastKnownLocation.Y,
+                                Lng = userLocation.LastKnownLocation.X
+                            };
+                        }
+                    }
+                }
+
+                if (originPoint != null)
+                {
+                    resolvedOriginPoint = originPoint;
+                    routePoints.Insert(0, originPoint);
+                }
+
+                // Destination: chỉ lấy theo toạ độ do FE gửi (không geocode theo tên)
+                if (IsUsableDeviceCoordinate(request.DestinationLatitude, request.DestinationLongitude))
+                {
+                    destinationPoint = new RoutePointDto
+                    {
+                        Lat = request.DestinationLatitude.GetValueOrDefault(),
+                        Lng = request.DestinationLongitude.GetValueOrDefault()
+                    };
+                }
+
+                if (destinationPoint != null)
+                {
+                    resolvedDestinationPoint = destinationPoint;
+                    // Tránh thêm trùng điểm cuối
+                    var hasSameLastPoint = routePoints.Count > 0
+                        && Math.Abs(routePoints[^1].Lat - destinationPoint.Lat) < 0.000001
+                        && Math.Abs(routePoints[^1].Lng - destinationPoint.Lng) < 0.000001;
+
+                    if (!hasSameLastPoint)
+                    {
+                        routePoints.Add(destinationPoint);
+                    }
+                }
+
+                // FE-friendly: Nếu có đủ origin + destination nhưng chưa có polyline, backend tự dựng route theo đường thực tế.
+                if (routePoints.Count < 3 && originPoint != null && destinationPoint != null)
+                {
+                    try
+                    {
+                        var originText = $"{originPoint.Lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},{originPoint.Lng.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+                        var destinationText = $"{destinationPoint.Lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},{destinationPoint.Lng.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
+                        var plannedRoute = await _routePlanningService.BuildRouteAsync(originText, destinationText, cancellationToken);
+                        if (plannedRoute.Count >= 2)
+                        {
+                            routePoints = plannedRoute;
+                        }
+                    }
+                    catch
+                    {
+                        // Fallback: giữ route tuyến thẳng origin->destination hiện có.
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = "Không thể xác định vị trí", details = ex.Message });
+            }
+
+            // Xác thực lộ trình có ít nhất 2 điểm
+            if (routePoints.Count < 2)
+                return BadRequest("Lộ trình cần ít nhất 2 điểm. Check-route chỉ nhận theo tọa độ: (1) GPS hiện tại + destinationLatitude/destinationLongitude, hoặc (2) originLatitude/originLongitude + destinationLatitude/destinationLongitude, hoặc routePoints.");
 
             // 1. Tạo đường dẫn (LineString) từ danh sách điểm
             var coordinates = routePoints.Select(p => new Coordinate(p.Lng, p.Lat)).ToArray();
@@ -253,8 +385,124 @@ namespace HcmcRainVision.Backend.Controllers
                 }
             }
 
+            var destinationRainHits = 0;
+            var destinationCoverageCount = 0;
+            if (resolvedDestinationPoint != null)
+            {
+                var destinationGeo = new Point(resolvedDestinationPoint.Lng, resolvedDestinationPoint.Lat) { SRID = 4326 };
+
+                destinationRainHits = rainingLogs
+                    .Count(x => x.Location != null && x.Location.Distance(destinationGeo) <= RAIN_ALERT_RADIUS_DEGREES);
+
+                if (destinationRainHits > 0)
+                {
+                    warnings.Add(new
+                    {
+                        Lat = resolvedDestinationPoint.Lat,
+                        Lng = resolvedDestinationPoint.Lng,
+                        Message = "Điểm đến đang có vùng mưa lân cận (<= 1km)."
+                    });
+                }
+
+                destinationCoverageCount = await _context.WeatherLogs
+                    .Where(x => x.Timestamp >= timeLimit
+                             && x.Location != null
+                             && x.Location.Distance(destinationGeo) <= DESTINATION_COVERAGE_RADIUS_DEGREES)
+                    .CountAsync(cancellationToken);
+
+                if (destinationCoverageCount == 0)
+                {
+                    warnings.Add(new
+                    {
+                        Lat = resolvedDestinationPoint.Lat,
+                        Lng = resolvedDestinationPoint.Lng,
+                        Message = "Chua du du lieu camera gan diem den trong 30 phut qua. Ket qua co the thap tin cay."
+                    });
+                }
+            }
+
             bool isSafe = warnings.Count == 0;
-            return Ok(new { IsSafe = isSafe, Warnings = warnings });
+            var riskLevel = warnings.Count switch
+            {
+                0 => "thap",
+                <= 2 => "trung_binh",
+                _ => "cao"
+            };
+
+            var summary = isSafe
+                ? "Khong phat hien diem mua nguy hiem tren lo trinh trong 30 phut gan day."
+                : $"Phat hien {warnings.Count} canh bao mua tren lo trinh hoac gan diem den.";
+
+            var recommendation = isSafe
+                ? "Ban co the di chuyen binh thuong, nhung van nen theo doi cap nhat thoi tiet."
+                : "Nen can nhac doi huong, doi gio di hoac chuan bi ao mua.";
+
+            var destinationLabel = resolvedDestinationPoint != null
+                ? $"{resolvedDestinationPoint.Lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},{resolvedDestinationPoint.Lng.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+                : null;
+
+            var originLabel = resolvedOriginPoint != null
+                ? $"{resolvedOriginPoint.Lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},{resolvedOriginPoint.Lng.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+                : null;
+
+            var isCoverageSufficient = destinationCoverageCount >= 3;
+            var dataQualityNote = destinationCoverageCount switch
+            {
+                0 => "Chua co du lieu camera gan diem den trong 30 phut qua.",
+                < 3 => "Du lieu gan diem den con it, nen doi chieu them nguon khac.",
+                _ => "Du lieu camera gan diem den du de tham khao."
+            };
+
+            return Ok(new
+            {
+                // Payload cũ để tương thích FE hiện tại
+                IsSafe = isSafe,
+                Warnings = warnings,
+                ModeUsed = modeUsed,
+                Source = new
+                {
+                    hasExplicitOrigin,
+                    hasExplicitDestination,
+                    hasCurrentGpsOrigin
+                },
+                Diagnostics = new
+                {
+                    destination = resolvedDestinationPoint,
+                    routePointCount = routePoints.Count,
+                    rainingLogCount = rainingLogs.Count,
+                    destinationRainHits,
+                    destinationCoverageCount
+                },
+
+                // Payload mới dễ hiểu hơn cho FE/UI
+                Result = new
+                {
+                    IsSafe = isSafe,
+                    RiskLevel = riskLevel,
+                    Summary = summary,
+                    Recommendation = recommendation
+                },
+                RouteInfo = new
+                {
+                    ModeUsed = modeUsed,
+                    Origin = originLabel,
+                    Destination = destinationLabel,
+                    RoutePointCount = routePoints.Count
+                },
+                RainInfo = new
+                {
+                    WarningCount = warnings.Count,
+                    DestinationRainHits = destinationRainHits,
+                    RainingCameraCountLast30m = rainingLogs.Count,
+                    Warnings = warnings
+                },
+                DataQuality = new
+                {
+                    DestinationCoverageCount30m = destinationCoverageCount,
+                    IsDestinationCoverageSufficient = isCoverageSufficient,
+                    Note = dataQualityNote
+                }
+            });
         }
 
         // API: GET api/weather/heatmap
@@ -277,5 +525,34 @@ namespace HcmcRainVision.Backend.Controllers
 
             return Ok(rainingLogs);
         }
+
+        private static bool IsUsableDeviceCoordinate(double? lat, double? lng)
+        {
+            if (!lat.HasValue || !lng.HasValue)
+            {
+                return false;
+            }
+
+            // Swagger thường gửi mặc định 0,0 -> xem như chưa có GPS thật.
+            if (Math.Abs(lat.Value) < double.Epsilon && Math.Abs(lng.Value) < double.Epsilon)
+            {
+                return false;
+            }
+
+            return lat.Value is >= -90 and <= 90
+                && lng.Value is >= -180 and <= 180;
+        }
+
+        private static bool IsUsableCoordinate(double lat, double lng)
+        {
+            if (Math.Abs(lat) < double.Epsilon && Math.Abs(lng) < double.Epsilon)
+            {
+                return false;
+            }
+
+            return lat is >= -90 and <= 90
+                && lng is >= -180 and <= 180;
+        }
+
     }
 }

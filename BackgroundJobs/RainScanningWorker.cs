@@ -116,19 +116,39 @@ namespace HcmcRainVision.Backend.BackgroundJobs
 
                         _logger.LogInformation($"Đã tải {activeSubscriptions.Count} subscriptions từ {subsByWard.Count} phường.");
 
-                        // Xử lý song song (Max 5 camera cùng lúc)
-                        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = stoppingToken };
+                        // Xử lý song song (Max 3 camera cùng lúc để tránh quá tải database)
+                        // Giảm từ 5 xuống 3 để tránh timeout khi có nhiều camera cùng lúc
+                        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 3, CancellationToken = stoppingToken };
 
-                        await Parallel.ForEachAsync(streams, parallelOptions, async (stream, token) =>
+                        // Thêm timeout cho toàn bộ parallel processing (15 phút)
+                        using var parallelCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                        parallelCts.CancelAfter(TimeSpan.FromMinutes(15));
+                        
+                        try
                         {
-                            await ProcessCameraAsync(stream, jobId, scope.ServiceProvider, subsByWard, token);
-                        });
+                            await Parallel.ForEachAsync(streams, parallelOptions, async (stream, token) =>
+                            {
+                                await ProcessCameraAsync(stream, jobId, scope.ServiceProvider, subsByWard, token);
+                            });
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            _logger.LogWarning("⏱️ Parallel processing timeout - exceeded 15 minute limit");
+                        }
 
                         // Kết thúc Job
                         job.Status = nameof(JobStatus.Completed);
                         job.EndedAt = DateTime.UtcNow;
                         job.Notes = $"Processed {streams.Count} streams";
-                        await db.SaveChangesAsync();
+                        
+                        try
+                        {
+                            await db.SaveChangesAsync();
+                        }
+                        catch (Exception dbEx)
+                        {
+                            _logger.LogError(dbEx, "Failed to save job completion status");
+                        }
                         
                         _logger.LogInformation($"✅ Hoàn thành Job #{jobId}");
                         
@@ -358,6 +378,18 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         camera.Status = nameof(CameraStatus.Active);
                     }
                 }
+            }
+            catch (OperationCanceledException ex)
+            {
+                attempt.Status = nameof(AttemptStatus.Error);
+                attempt.ErrorMessage = $"Database operation timeout - {ex.Message}";
+                _logger.LogError($"⏱️ Timeout khi xử lý Camera {stream.CameraId}: {ex.Message}");
+            }
+            catch (TimeoutException ex)
+            {
+                attempt.Status = nameof(AttemptStatus.Error);
+                attempt.ErrorMessage = $"Connection timeout - {ex.Message}";
+                _logger.LogError($"⏱️ Timeout kết nối Camera {stream.CameraId}: {ex.Message}");
             }
             catch (Exception ex)
             {
