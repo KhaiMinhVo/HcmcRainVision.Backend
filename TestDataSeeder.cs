@@ -692,6 +692,360 @@ public static class TestDataSeeder
             Console.WriteLine($"✅ Cụm 1: thêm {insertedCluster1StreamCount} luồng camera, cập nhật {updatedCluster1StreamCount} luồng camera.");
         }
 
+        // ========================================
+        // CLUSTER 6 - Khu Bình Thạnh - Gò Vấp
+        // ========================================
+        var cluster6TrafficCameraSeeds = new[]
+        {
+            new { Id = "CAM_GT_58affc6017139d0010f35cc8", Name = "Phạm Văn Đồng - QL13", WardId = "W_HIEPBINH_C06", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_56df8198c062921100c143dd", Name = "Nút giao Thủ Đức - Võ Văn Ngân", WardId = "W_THUDUC_C06", StreamUrl = "http://125.234.114.126:11984/api/stream.m3u8?src=Nút%20giao%20Thủ%20Đức%203" },
+            new { Id = "CAM_GT_662b558c1afb9c00172d8ed2", Name = "625 Quang Trung", WardId = "W_GOVAP_C06", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_5a6066608576340017d06617", Name = "Quang Trung - Tân Sơn", WardId = "W_THONGTAYHOI_C06", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_587ee0ecb807da0011e33d50", Name = "Phan Đăng Lưu - Lê Văn Duyệt", WardId = "W_GIADINH_C06", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_63b66089bfd3d90017eaa4bd", Name = "Nơ Trang Long - Chu Văn An", WardId = "W_BINHTHANH_C06", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_58d7c20ac1e33c00112b321c", Name = "Phạm Văn Đồng - Phan Văn Trị 2", WardId = "W_BINHLOITRUNG_C06", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_63b65f8dbfd3d90017eaa434", Name = "Cầu Thị Nghè - Xô Viết Nghệ Tính", WardId = "W_THANHMYTAY_C06", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_5a8254f25058170011f6eac5", Name = "Xô Viết Nghệ Tính - Nguyễn Xí 2", WardId = "W_BINHQUOI_C06", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" }
+        };
+
+        var cluster6CameraIds = cluster6TrafficCameraSeeds.Select(x => x.Id).ToHashSet();
+        const double defaultCluster6Lat = 10.8090;
+        const double defaultCluster6Lng = 106.7100;
+        
+        var cluster6CoordinateMap = new Dictionary<string, (double Lat, double Lon)>
+        {
+            // Phường Hiệp Bình - Phạm Văn Đồng - QL13
+            { "CAM_GT_58affc6017139d0010f35cc8", (10.8159, 106.7265) },
+            // Phường Thủ Đức - Nút giao (Võ Văn Ngân)
+            { "CAM_GT_56df8198c062921100c143dd", (10.8035, 106.7422) },
+            // Phường Gò Vấp - 625 Quang Trung
+            { "CAM_GT_662b558c1afb9c00172d8ed2", (10.8164, 106.6931) },
+            // Phường Thông Tây Hội - Quang Trung - Tân Sơn
+            { "CAM_GT_5a6066608576340017d06617", (10.8085, 106.6913) },
+            // Phường Gia Định - Phan Đăng Lưu - Lê Văn Duyệt
+            { "CAM_GT_587ee0ecb807da0011e33d50", (10.7992, 106.7158) },
+            // Phường Bình Thạnh - Nơ Trang Long - Chu Văn An
+            { "CAM_GT_63b66089bfd3d90017eaa4bd", (10.7821, 106.7497) },
+            // Phường Bình Lợi Trung - Phạm Văn Đồng - Phan Văn Trị 2
+            { "CAM_GT_58d7c20ac1e33c00112b321c", (10.8111, 106.7335) },
+            // Phường Thạnh Mỹ Tây - Cầu Thị Nghè (Xô Viết Nghệ Tính - Phan Văn Hân)
+            { "CAM_GT_63b65f8dbfd3d90017eaa434", (10.7945, 106.7510) },
+            // Phường Bình Quới - Xô Viết Nghệ Tính - Nguyễn Xí 2
+            { "CAM_GT_5a8254f25058170011f6eac5", (10.8194, 106.7628) }
+        };
+
+        var insertedCluster6CameraCount = 0;
+        var updatedCluster6CameraCount = 0;
+
+        foreach (var seed in cluster6TrafficCameraSeeds)
+        {
+            var (lat, lon) = cluster6CoordinateMap.TryGetValue(seed.Id, out var coords) 
+                ? coords 
+                : (defaultCluster6Lat, defaultCluster6Lng);
+                
+            if (!existingCameraById.TryGetValue(seed.Id, out var existingCam))
+            {
+                await context.Cameras.AddAsync(new Camera
+                {
+                    Id = seed.Id,
+                    Name = seed.Name,
+                    Latitude = lat,
+                    Longitude = lon,
+                    WardId = seed.WardId,
+                    Status = nameof(CameraStatus.Active)
+                });
+                insertedCluster6CameraCount++;
+                existingCameraById[seed.Id] = new Camera { Id = seed.Id };
+                continue;
+            }
+
+            var cameraChanged = false;
+            if (existingCam.Name != seed.Name)
+            {
+                existingCam.Name = seed.Name;
+                cameraChanged = true;
+            }
+
+            if (existingCam.WardId != seed.WardId)
+            {
+                existingCam.WardId = seed.WardId;
+                cameraChanged = true;
+            }
+
+            if (existingCam.Status != nameof(CameraStatus.Active))
+            {
+                existingCam.Status = nameof(CameraStatus.Active);
+                cameraChanged = true;
+            }
+            
+            var (newLat, newLon) = cluster6CoordinateMap.TryGetValue(seed.Id, out var newCoords) 
+                ? newCoords 
+                : (existingCam.Latitude, existingCam.Longitude);
+            
+            if (Math.Abs(existingCam.Latitude - newLat) > 0.0001 || Math.Abs(existingCam.Longitude - newLon) > 0.0001)
+            {
+                existingCam.Latitude = newLat;
+                existingCam.Longitude = newLon;
+                cameraChanged = true;
+            }
+
+            if (cameraChanged)
+            {
+                updatedCluster6CameraCount++;
+            }
+        }
+
+        if (insertedCluster6CameraCount > 0 || updatedCluster6CameraCount > 0)
+        {
+            await context.SaveChangesAsync();
+            Console.WriteLine($"✅ Cụm 6: thêm {insertedCluster6CameraCount} camera, cập nhật {updatedCluster6CameraCount} camera.");
+        }
+
+        var existingCluster6Streams = await context.CameraStreams
+            .Where(s => cluster6CameraIds.Contains(s.CameraId) && s.IsPrimary)
+            .ToDictionaryAsync(s => s.CameraId, s => s);
+
+        var insertedCluster6StreamCount = 0;
+        var updatedCluster6StreamCount = 0;
+        foreach (var seed in cluster6TrafficCameraSeeds)
+        {
+            if (!existingCluster6Streams.TryGetValue(seed.Id, out var stream))
+            {
+                await context.CameraStreams.AddAsync(new CameraStream
+                {
+                    CameraId = seed.Id,
+                    StreamUrl = seed.StreamUrl,
+                    StreamType = "Snapshot",
+                    IsPrimary = true,
+                    IsActive = true
+                });
+                insertedCluster6StreamCount++;
+                continue;
+            }
+
+            var streamChanged = false;
+            if (stream.StreamUrl != seed.StreamUrl)
+            {
+                stream.StreamUrl = seed.StreamUrl;
+                streamChanged = true;
+            }
+
+            if (stream.StreamType != "Snapshot")
+            {
+                stream.StreamType = "Snapshot";
+                streamChanged = true;
+            }
+
+            if (!stream.IsActive)
+            {
+                stream.IsActive = true;
+                streamChanged = true;
+            }
+
+            if (streamChanged)
+            {
+                updatedCluster6StreamCount++;
+            }
+        }
+
+        if (insertedCluster6StreamCount > 0 || updatedCluster6StreamCount > 0)
+        {
+            await context.SaveChangesAsync();
+            Console.WriteLine($"✅ Cụm 6: thêm {insertedCluster6StreamCount} luồng camera, cập nhật {updatedCluster6StreamCount} luồng camera.");
+        }
+
+        // ========================================
+        // CLUSTER 8 - TP. Thủ Đức
+        // ========================================
+        var cluster8TrafficCameraSeeds = new[]
+        {
+            new { Id = "CAM_GT_5990ffdbbec3b90016d2ad2d", Name = "Đầu Hầm TP Thủ Đức - Hầm Thủ Thiêm", WardId = "W_ANKHANH_C08", StreamUrl = "http://125.234.114.126:11984/api/stream.m3u8?src=TTH/60.2%20Đường%20hầm" },
+            new { Id = "CAM_GT_587c782db807da0011e33d3b", Name = "Võ Nguyên Giáp - Thảo Điền", WardId = "W_ANKHANH_C08", StreamUrl = "http://125.234.114.126:11984/api/stream.m3u8?src=Xa%20Lộ%20Hà%20Nội%20-%20Thảo%20Điền" },
+            new { Id = "CAM_GT_631813ebc9eae60017a196b0", Name = "Cầu Sài Gòn 8 - Thủ Đức", WardId = "W_ANKHANH_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_6623f1996f998a001b252805", Name = "Mai Chí Thọ - Xa Lộ Hà Nội (3)", WardId = "W_ANKHANH_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_63b54cffbfd3d90017ea7ad0", Name = "Tỉnh Lộ 43 - Chân Cầu Gò Dưa", WardId = "W_TAMBINH_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_5d8cd98d766c88001718895a", Name = "Phạm Văn Đồng - Tô Ngọc Vân", WardId = "W_TAMBINH_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_587461c1b807da0011e33cc8", Name = "Quốc Lộ 1 - Ngã Tư Linh Xuân", WardId = "W_LINHXUAN_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_586e28a0f9fab7001111b0b3", Name = "Quốc Lộ 1 - KCX Linh Trung 1", WardId = "W_LINHXUAN_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_6623f1f16f998a001b25281f", Name = "Phạm Văn Đồng - Đào Trinh Nhất", WardId = "W_LINHXUAN_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_5ad0679598d8fc001102e274", Name = "Lê Văn Việt - Man Thiện", WardId = "W_TANGNHONPHU_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_56df8159c062921100c143dc", Name = "Ngã Tư Thủ Đức - Lê Văn Việt", WardId = "W_TANGNHONPHU_C08", StreamUrl = "http://125.234.114.126:11984/api/stream.m3u8?src=Nút%20giao%20Thủ%20Đức%201" },
+            new { Id = "CAM_GT_63b54a9ebfd3d90017ea7911", Name = "Nguyễn Xiển - Nguyễn Văn Tăng", WardId = "W_TANGNHONPHU_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_63b54938bfd3d90017ea77f6", Name = "Nguyễn Duy Trinh - Lã Xuân Oai", WardId = "W_LONGTRUONG_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_56de42f611f398ec0c48129e", Name = "Đồng Văn Cống - Phan Văn Đáng", WardId = "W_CATLAI_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_56de42f611f398ec0c48129f", Name = "Đồng Văn Cống - Nguyễn Thị Định", WardId = "W_CATLAI_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_63b54968bfd3d90017ea7808", Name = "Nguyễn Duy Trinh - Đỗ Xuân Hợp", WardId = "W_BINHTRUNG_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_63b54898bfd3d90017ea77ae", Name = "Nguyễn Duy Trinh - Bưng Ông Thoàn", WardId = "W_BINHTRUNG_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_63b54996bfd3d90017ea781a", Name = "Đỗ Xuân Hợp - Dương Đình Hội", WardId = "W_PHUOCLONG_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
+            new { Id = "CAM_GT_56df8274c062921100c143df", Name = "Võ Nguyên Giáp - Tây Hòa 1", WardId = "W_PHUOCLONG_C08", StreamUrl = "http://125.234.114.126:11984/api/stream.m3u8?src=Xa%20Lộ%20Hà%20Nội%20-%20Tây%20Hòa%201" }
+        };
+
+        var cluster8CameraIds = cluster8TrafficCameraSeeds.Select(x => x.Id).ToHashSet();
+        const double defaultCluster8Lat = 10.8450;
+        const double defaultCluster8Lng = 106.7700;
+        
+        var cluster8CoordinateMap = new Dictionary<string, (double Lat, double Lon)>
+        {
+            // Phường An Khánh - Đầu hầm TP Thủ Đức - Hầm Thủ Thiêm
+            { "CAM_GT_5990ffdbbec3b90016d2ad2d", (10.8005, 106.7625) },
+            // Phường An Khánh - Võ Nguyên Giáp - Thảo Điền
+            { "CAM_GT_587c782db807da0011e33d3b", (10.8062, 106.7779) },
+            // Phường An Khánh - Cầu Sài Gòn 8 - Thủ Đức
+            { "CAM_GT_631813ebc9eae60017a196b0", (10.8097, 106.7662) },
+            // Phường An Khánh - Mai Chí Thọ - Xa Lộ Hà Nội
+            { "CAM_GT_6623f1996f998a001b252805", (10.8173, 106.7856) },
+            // Phường Tam Bình - Tỉnh lộ 43 - Chân cầu Gò Dưa
+            { "CAM_GT_63b54cffbfd3d90017ea7ad0", (10.8347, 106.7442) },
+            // Phường Tam Bình - Phạm Văn Đồng - Tô Ngọc Vân
+            { "CAM_GT_5d8cd98d766c88001718895a", (10.8283, 106.7401) },
+            // Phường Linh Xuân - Quốc Lộ 1 - Ngã Tư Linh Xuân
+            { "CAM_GT_587461c1b807da0011e33cc8", (10.8631, 106.7641) },
+            // Phường Linh Xuân - Quốc Lộ 1 - KCX Linh Trung 1
+            { "CAM_GT_586e28a0f9fab7001111b0b3", (10.8718, 106.7764) },
+            // Phường Linh Xuân - Phạm Văn Đồng - Đào Trinh Nhất
+            { "CAM_GT_6623f1f16f998a001b25281f", (10.8720, 106.7413) },
+            // Phường Tăng Nhơn Phú - Lê Văn Việt - Man Thiện
+            { "CAM_GT_5ad0679598d8fc001102e274", (10.8852, 106.7673) },
+            // Phường Tăng Nhơn Phú - Ngã Tư Thủ Đức - Lê Văn Việt
+            { "CAM_GT_56df8159c062921100c143dc", (10.8708, 106.7748) },
+            // Phường Tăng Nhơn Phú - Nguyễn Xiển - Nguyễn Văn Tăng
+            { "CAM_GT_63b54a9ebfd3d90017ea7911", (10.8764, 106.7907) },
+            // Phường Long Trường - Nguyễn Duy Trinh - Lã Xuân Oai
+            { "CAM_GT_63b54938bfd3d90017ea77f6", (10.8951, 106.7851) },
+            // Phường Cát Lái - Đồng Văn Cống - Phan Văn Đáng
+            { "CAM_GT_56de42f611f398ec0c48129e", (10.9075, 106.8042) },
+            // Phường Cát Lái - Đồng Văn Cống - Nguyễn Thị Định
+            { "CAM_GT_56de42f611f398ec0c48129f", (10.9102, 106.8067) },
+            // Phường Bình Trưng - Nguyễn Duy Trinh - Đỗ Xuân Hợp
+            { "CAM_GT_63b54968bfd3d90017ea7808", (10.9142, 106.7919) },
+            // Phường Bình Trưng - Nguyễn Duy Trinh - Bưng Ông Thoàn
+            { "CAM_GT_63b54898bfd3d90017ea77ae", (10.9153, 106.8038) },
+            // Phường Phước Long - Đỗ Xuân Hợp - Dương Đình Hội
+            { "CAM_GT_63b54996bfd3d90017ea781a", (10.9243, 106.8123) },
+            // Phường Phước Long - Võ Nguyên Giáp - Tây Hòa 1
+            { "CAM_GT_56df8274c062921100c143df", (10.9305, 106.8215) }
+        };
+
+        var insertedCluster8CameraCount = 0;
+        var updatedCluster8CameraCount = 0;
+
+        foreach (var seed in cluster8TrafficCameraSeeds)
+        {
+            var (lat, lon) = cluster8CoordinateMap.TryGetValue(seed.Id, out var coords) 
+                ? coords 
+                : (defaultCluster8Lat, defaultCluster8Lng);
+                
+            if (!existingCameraById.TryGetValue(seed.Id, out var existingCam))
+            {
+                await context.Cameras.AddAsync(new Camera
+                {
+                    Id = seed.Id,
+                    Name = seed.Name,
+                    Latitude = lat,
+                    Longitude = lon,
+                    WardId = seed.WardId,
+                    Status = nameof(CameraStatus.Active)
+                });
+                insertedCluster8CameraCount++;
+                existingCameraById[seed.Id] = new Camera { Id = seed.Id };
+                continue;
+            }
+
+            var cameraChanged = false;
+            if (existingCam.Name != seed.Name)
+            {
+                existingCam.Name = seed.Name;
+                cameraChanged = true;
+            }
+
+            if (existingCam.WardId != seed.WardId)
+            {
+                existingCam.WardId = seed.WardId;
+                cameraChanged = true;
+            }
+
+            if (existingCam.Status != nameof(CameraStatus.Active))
+            {
+                existingCam.Status = nameof(CameraStatus.Active);
+                cameraChanged = true;
+            }
+            
+            var (newLat, newLon) = cluster8CoordinateMap.TryGetValue(seed.Id, out var newCoords) 
+                ? newCoords 
+                : (existingCam.Latitude, existingCam.Longitude);
+            
+            if (Math.Abs(existingCam.Latitude - newLat) > 0.0001 || Math.Abs(existingCam.Longitude - newLon) > 0.0001)
+            {
+                existingCam.Latitude = newLat;
+                existingCam.Longitude = newLon;
+                cameraChanged = true;
+            }
+
+            if (cameraChanged)
+            {
+                updatedCluster8CameraCount++;
+            }
+        }
+
+        if (insertedCluster8CameraCount > 0 || updatedCluster8CameraCount > 0)
+        {
+            await context.SaveChangesAsync();
+            Console.WriteLine($"✅ Cụm 8: thêm {insertedCluster8CameraCount} camera, cập nhật {updatedCluster8CameraCount} camera.");
+        }
+
+        var existingCluster8Streams = await context.CameraStreams
+            .Where(s => cluster8CameraIds.Contains(s.CameraId) && s.IsPrimary)
+            .ToDictionaryAsync(s => s.CameraId, s => s);
+
+        var insertedCluster8StreamCount = 0;
+        var updatedCluster8StreamCount = 0;
+        foreach (var seed in cluster8TrafficCameraSeeds)
+        {
+            if (!existingCluster8Streams.TryGetValue(seed.Id, out var stream))
+            {
+                await context.CameraStreams.AddAsync(new CameraStream
+                {
+                    CameraId = seed.Id,
+                    StreamUrl = seed.StreamUrl,
+                    StreamType = "Snapshot",
+                    IsPrimary = true,
+                    IsActive = true
+                });
+                insertedCluster8StreamCount++;
+                continue;
+            }
+
+            var streamChanged = false;
+            if (stream.StreamUrl != seed.StreamUrl)
+            {
+                stream.StreamUrl = seed.StreamUrl;
+                streamChanged = true;
+            }
+
+            if (stream.StreamType != "Snapshot")
+            {
+                stream.StreamType = "Snapshot";
+                streamChanged = true;
+            }
+
+            if (!stream.IsActive)
+            {
+                stream.IsActive = true;
+                streamChanged = true;
+            }
+
+            if (streamChanged)
+            {
+                updatedCluster8StreamCount++;
+            }
+        }
+
+        if (insertedCluster8StreamCount > 0 || updatedCluster8StreamCount > 0)
+        {
+            await context.SaveChangesAsync();
+            Console.WriteLine($"✅ Cụm 8: thêm {insertedCluster8StreamCount} luồng camera, cập nhật {updatedCluster8StreamCount} luồng camera.");
+        }
+
         var existingCameras = await context.Cameras.ToListAsync();
         var validWardIds = await context.Wards
             .Select(w => w.WardId)
