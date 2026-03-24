@@ -169,7 +169,7 @@ namespace HcmcRainVision.Backend.Controllers
             await _context.SaveChangesAsync();
             
             // Lưu ý: Ảnh của camera này (nếu lưu Local) vẫn tồn tại trong wwwroot/images/rain_logs/
-            // Các ảnh này sẽ được dọn dẹp tự động sau 24h bởi CleanupOldImagesAsync() trong Worker
+                // Các ảnh này sẽ được dọn dẹp tự động sau 2 ngày bởi CleanupOldImagesAsync() trong Worker
             // Nếu muốn xóa ngay lập tức, có thể thêm logic tìm và xóa các file có pattern {cameraId}_*
             
             return Ok(new { message = "Đã xóa camera thành công" });

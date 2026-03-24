@@ -4,7 +4,6 @@ using HcmcRainVision.Backend.Services.Crawling;
 using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.AI;
 using HcmcRainVision.Backend.Services.Notification;
-using HcmcRainVision.Backend.Services.Chatbot;
 using HcmcRainVision.Backend.Hubs;
 using HcmcRainVision.Backend;
 using Microsoft.EntityFrameworkCore;
@@ -45,13 +44,21 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 });
 
 // 2. Đăng ký HttpClient Factory với Polly Resilience
+// QUAN TRỌNG: Camera servers từ giaothong.hochiminhcity.gov.vn có thể chậm (5-15 giây)
+// nên cần timeout dài hơn và retry logic thông minh
+// NOTE: Polly có 2 timeout layers:
+//   - AttemptTimeout: timeout cho mỗi lần thử (timeout on individual request)
+//   - TotalRequestTimeout: timeout tổng cho tất cả retries (timeout for all attempts combined)
+// Cả hai đều cần được tăng lên để accommodate servers chậm
 builder.Services.AddHttpClient("CameraClient", client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(10);
+    // TĂNG TIMEOUT CỰC CAO: 60 giây vì camera servers rất chậm
+    // Polly sẽ có timeout riêng nhưng client timeout cũng ảnh hưởng
+    client.Timeout = TimeSpan.FromSeconds(60);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
     client.DefaultRequestHeaders.Referrer = new Uri("http://giaothong.hochiminhcity.gov.vn/");
 })
-.AddStandardResilienceHandler(); // Tự động retry, circuit breaker, timeout chuẩn Microsoft
+.AddStandardResilienceHandler(); // Retry + Circuit breaker với timeout chuẩn Microsoft
 
 // 2.1. Đăng ký HttpClient mặc định cho các service khác
 builder.Services.AddHttpClient();
@@ -60,44 +67,33 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<ICameraCrawler, CameraCrawler>();
 builder.Services.AddSingleton<IImagePreProcessor, ImagePreProcessor>();
 builder.Services.AddSingleton<ICloudStorageService, CloudStorageService>();
-builder.Services.AddScoped<IRainAssistantService, RainAssistantService>();
-builder.Services.AddSingleton<RouteMonitoringRegistry>();
-builder.Services.AddHostedService<RouteRainMonitoringWorker>();
-
-// Đăng ký Route Planning service: dùng Google Maps nếu có API key, fallback về OSRM
-var googleMapsApiKey = builder.Configuration["GoogleMaps:ApiKey"];
-if (!string.IsNullOrWhiteSpace(googleMapsApiKey))
-{
-    builder.Services.AddHttpClient<IRoutePlanningService, GoogleMapsRoutePlanningService>(client =>
-    {
-        client.Timeout = TimeSpan.FromSeconds(20);
-    });
-}
-else
-{
-    builder.Services.AddHttpClient<IRoutePlanningService, OsrmRoutePlanningService>(client =>
-    {
-        client.Timeout = TimeSpan.FromSeconds(20);
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("HcmcRainVisionBot/1.0");
-    });
-}
-
-// 4. Đăng ký Background Worker (Chạy ngầm)
-// Đăng ký Geocoding Service để convert tên địa chỉ → lat/lng
-builder.Services.AddHttpClient<IGeocodingService, GeocodingService>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(20);
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("HcmcRainVisionBot/1.0");
-});
-
 // 4. Đăng ký Background Worker (Chạy ngầm)
 builder.Services.AddHostedService<RainScanningWorker>();
 
-// 5. Đăng ký AI Service thật bằng ML.NET
+// 5. Đăng ký AI Service với fallback an toàn khi model ML.NET không khả dụng
 var modelFilePath = Path.Combine(builder.Environment.ContentRootPath, "MLModels", "RainModel.zip");
-builder.Services.AddPredictionEnginePool<ModelInput, ModelOutput>()
-    .FromFile(modelName: "RainModel", filePath: modelFilePath, watchForChanges: true);
-builder.Services.AddScoped<IRainPredictionService, MlRainPredictionService>();
+var enableMlModel = builder.Configuration.GetValue("AI:EnableModel", true);
+var canUseMlModel = enableMlModel && File.Exists(modelFilePath);
+
+if (canUseMlModel)
+{
+    try
+    {
+        builder.Services.AddPredictionEnginePool<ModelInput, ModelOutput>()
+            .FromFile(modelName: "RainModel", filePath: modelFilePath, watchForChanges: true);
+        builder.Services.AddScoped<IRainPredictionService, MlRainPredictionService>();
+    }
+    catch (Exception ex)
+    {
+        builder.Logging.AddConsole();
+        Console.WriteLine($"⚠️ Không thể khởi tạo ML model, fallback sang mock: {ex.Message}");
+        builder.Services.AddScoped<IRainPredictionService, MockRainPredictionService>();
+    }
+}
+else
+{
+    builder.Services.AddScoped<IRainPredictionService, MockRainPredictionService>();
+}
 
 // 6. Đăng ký Email Service
 builder.Services.AddTransient<IEmailService, EmailService>();

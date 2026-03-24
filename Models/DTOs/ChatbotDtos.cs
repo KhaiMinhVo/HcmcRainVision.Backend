@@ -6,22 +6,15 @@ namespace HcmcRainVision.Backend.Models.DTOs
         public double Lng { get; set; }
     }
 
-    // DTO cho check-route endpoint - hỗ trợ vị trí hiện tại của user
     public class CheckRouteRequest
     {
-         // MODE 1: FE gửi GPS hiện tại + destination
-         public double? CurrentLatitude { get; set; }
-         public double? CurrentLongitude { get; set; }
-
-         // MODE 2B: Chọn điểm đi/điểm đến bằng toạ độ pin trên bản đồ
-         public double? OriginLatitude { get; set; }
-         public double? OriginLongitude { get; set; }
-         public double? DestinationLatitude { get; set; }
-         public double? DestinationLongitude { get; set; }
-
-         // Tuỳ chọn nâng cao: FE gửi sẵn polyline/điểm route
-         // Nếu có và hợp lệ (>=2 điểm), backend dùng trực tiếp không cần build route.
-         public List<RoutePointDto> RoutePoints { get; set; } = new();
+        public double? CurrentLatitude { get; set; }
+        public double? CurrentLongitude { get; set; }
+        public double? OriginLatitude { get; set; }
+        public double? OriginLongitude { get; set; }
+        public double? DestinationLatitude { get; set; }
+        public double? DestinationLongitude { get; set; }
+        public List<RoutePointDto> RoutePoints { get; set; } = new();
     }
 
     public class DistrictRainResult
@@ -44,8 +37,6 @@ namespace HcmcRainVision.Backend.Models.DTOs
         public int SamplePointCount { get; set; }
         public int RainyPointCount { get; set; }
         public List<object> Warnings { get; set; } = new();
-
-        // Metadata để FE hiển thị mode đang dùng
         public string? ModeUsed { get; set; }
         public bool HasExplicitOrigin { get; set; }
         public bool HasExplicitDestination { get; set; }

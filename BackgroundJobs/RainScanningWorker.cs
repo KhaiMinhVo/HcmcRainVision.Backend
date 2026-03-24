@@ -483,7 +483,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             }
         }
 
-        // Tự động xóa ảnh cũ quá 24h
+        // Tự động xóa ảnh cũ, chỉ giữ 2 ngày gần nhất
         private async Task CleanupOldImagesAsync()
         {
             try
@@ -496,13 +496,13 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     {
                         foreach (var file in dir.GetFiles())
                         {
-                            if (file.CreationTimeUtc < DateTime.UtcNow.AddHours(-24))
+                            if (file.CreationTimeUtc < DateTime.UtcNow.AddDays(-2))
                             {
                                 file.Delete();
                             }
                         }
                     });
-                    _logger.LogInformation("🧹 Đã dọn dẹp ảnh cũ hơn 24 giờ.");
+                    _logger.LogInformation("🧹 Đã dọn dẹp ảnh cũ hơn 2 ngày.");
                 }
             }
             catch (Exception ex)

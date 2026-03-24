@@ -41,12 +41,16 @@ namespace HcmcRainVision.Backend.Services.Crawling
 
             // 2. Tạo Named Client từ Factory (Polly sẽ tự động retry)
             var client = _httpClientFactory.CreateClient("CameraClient");
+            var startTime = DateTime.UtcNow;
 
             try 
             {
-                _logger.LogInformation($"Đang tải ảnh từ: {url}");
+                _logger.LogInformation($"[CameraCrawler] Đang tải ảnh từ: {url} (timeout: 30s)");
                 
                 var response = await client.GetAsync(url);
+                
+                var elapsedMs = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                _logger.LogInformation($"[CameraCrawler] ✅ Phản hồi nhận được trong {elapsedMs:F0}ms từ: {url}");
                 
                 // Nếu lỗi (404, 403...) ném ra exception
                 response.EnsureSuccessStatusCode();
@@ -55,17 +59,39 @@ namespace HcmcRainVision.Backend.Services.Crawling
                 var mediaType = response.Content.Headers.ContentType?.MediaType;
                 if (mediaType != "image/jpeg" && mediaType != "image/png")
                 {
-                    _logger.LogWarning($"URL không trả về ảnh! Nhận được: {mediaType}");
+                    _logger.LogWarning($"[CameraCrawler] ⚠️ URL không trả về ảnh! Content-Type: {mediaType} từ {url}");
                     return null;
                 }
 
                 // Đọc dữ liệu ảnh thành mảng byte (để chuyển cho AI xử lý)
-                return await response.Content.ReadAsByteArrayAsync();
+                var imageBytes = await response.Content.ReadAsByteArrayAsync();
+                _logger.LogInformation($"[CameraCrawler] ✅ Tải thành công {imageBytes.Length} bytes từ {url}");
+                
+                return imageBytes;
+            }
+            catch (HttpRequestException httpEx) when (httpEx.InnerException is TimeoutException || httpEx.Message.Contains("timeout"))
+            {
+                var elapsedMs = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                _logger.LogWarning($"[CameraCrawler] ⏱️ Timeout sau {elapsedMs:F0}ms từ {url}: {httpEx.Message}");
+                return null;
+            }
+            catch (TaskCanceledException cancelEx)
+            {
+                var elapsedMs = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                _logger.LogWarning($"[CameraCrawler] 🚫 Request bị hủy/timeout sau {elapsedMs:F0}ms từ {url}: {cancelEx.Message}");
+                return null;
+            }
+            catch (HttpRequestException httpEx)
+            {
+                var elapsedMs = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                _logger.LogError($"[CameraCrawler] ❌ HTTP Error sau {elapsedMs:F0}ms từ {url}: {httpEx.Message}");
+                return null;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"❌ Lỗi khi crawl camera {url}: {ex.Message}");
-                return null; // Trả về null để Worker biết mà bỏ qua
+                var elapsedMs = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                _logger.LogError(ex, $"[CameraCrawler] ❌ Lỗi bất ngờ sau {elapsedMs:F0}ms khi crawl {url}");
+                return null;
             }
         }
 
