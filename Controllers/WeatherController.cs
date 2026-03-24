@@ -79,6 +79,7 @@ namespace HcmcRainVision.Backend.Controllers
                 IsRaining = x.IsRaining,
                 Confidence = x.Confidence,
                 TimeAgo = GetTimeAgo(x.Timestamp),
+                Timestamp = x.Timestamp.ToString("o"), // ISO 8601 để FE parse chính xác
                 ImageUrl = x.ImageUrl
             });
 
