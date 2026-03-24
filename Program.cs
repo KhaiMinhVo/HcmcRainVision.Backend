@@ -4,7 +4,6 @@ using HcmcRainVision.Backend.Services.Crawling;
 using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.AI;
 using HcmcRainVision.Backend.Services.Notification;
-using HcmcRainVision.Backend.Services.Chatbot;
 using HcmcRainVision.Backend.Hubs;
 using HcmcRainVision.Backend;
 using Microsoft.EntityFrameworkCore;
@@ -68,8 +67,6 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<ICameraCrawler, CameraCrawler>();
 builder.Services.AddSingleton<IImagePreProcessor, ImagePreProcessor>();
 builder.Services.AddSingleton<ICloudStorageService, CloudStorageService>();
-builder.Services.AddSingleton<IRoutePlanningService, OsrmRoutePlanningService>();
-builder.Services.AddScoped<IChatbotService, ChatbotService>();
 // 4. Đăng ký Background Worker (Chạy ngầm)
 builder.Services.AddHostedService<RainScanningWorker>();
 
