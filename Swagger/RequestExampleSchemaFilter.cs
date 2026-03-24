@@ -9,26 +9,6 @@ namespace HcmcRainVision.Backend.Swagger
     {
         public void Apply(OpenApiSchema schema, SchemaFilterContext context)
         {
-            if (context.Type == typeof(ChatbotAskRequest))
-            {
-                schema.Example = new OpenApiObject
-                {
-                    ["message"] = new OpenApiString("Quận 2 có đang mưa không?"),
-                    ["origin"] = new OpenApiNull(),
-                    ["destination"] = new OpenApiNull(),
-                    ["originLatitude"] = new OpenApiNull(),
-                    ["originLongitude"] = new OpenApiNull(),
-                    ["destinationLatitude"] = new OpenApiNull(),
-                    ["destinationLongitude"] = new OpenApiNull(),
-                    ["routePoints"] = new OpenApiArray(),
-                    ["departureTimeUtc"] = new OpenApiNull(),
-                    ["currentLatitude"] = new OpenApiNull(),
-                    ["currentLongitude"] = new OpenApiNull()
-                };
-
-                return;
-            }
-
             if (context.Type == typeof(CheckRouteRequest))
             {
                 schema.Example = new OpenApiObject

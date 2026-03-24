@@ -61,16 +61,8 @@ builder.Services.AddSingleton<ICameraCrawler, CameraCrawler>();
 builder.Services.AddSingleton<IImagePreProcessor, ImagePreProcessor>();
 builder.Services.AddSingleton<ICloudStorageService, CloudStorageService>();
 builder.Services.AddScoped<IRainAssistantService, RainAssistantService>();
-builder.Services.AddScoped<IChatbotService, ChatbotService>();
 builder.Services.AddSingleton<RouteMonitoringRegistry>();
 builder.Services.AddHostedService<RouteRainMonitoringWorker>();
-
-builder.Services.Configure<ChatbotLlmOptions>(builder.Configuration.GetSection("ChatbotLlm"));
-builder.Services.AddHttpClient<ILlmIntentService, OpenAiFunctionCallingIntentService>((serviceProvider, client) =>
-{
-    var llmOptions = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<ChatbotLlmOptions>>().Value;
-    client.Timeout = TimeSpan.FromSeconds(Math.Max(5, llmOptions.TimeoutSeconds));
-});
 
 // Đăng ký Route Planning service: dùng Google Maps nếu có API key, fallback về OSRM
 var googleMapsApiKey = builder.Configuration["GoogleMaps:ApiKey"];
