@@ -79,11 +79,121 @@ namespace HcmcRainVision.Backend.Controllers
                 IsRaining = x.IsRaining,
                 Confidence = x.Confidence,
                 TimeAgo = GetTimeAgo(x.Timestamp),
-                Timestamp = x.Timestamp.ToString("o"), // ISO 8601 để FE parse chính xác
                 ImageUrl = x.ImageUrl
             });
 
             return Ok(result);
+        }
+
+        // API: GET api/weather/raining-cameras/count
+        // Đếm số camera "đang mưa" dựa trên bản ghi mới nhất của mỗi camera trong khoảng thời gian gần đây
+        [HttpGet("raining-cameras/count")]
+        public async Task<IActionResult> GetRainingCameraCount([FromQuery] int minutes = 30)
+        {
+            if (minutes <= 0 || minutes > 180)
+            {
+                return BadRequest(new { message = "minutes phải nằm trong khoảng 1..180" });
+            }
+
+            var timeLimit = DateTime.UtcNow.AddMinutes(-minutes);
+
+            var recentLogs = await _context.WeatherLogs
+                .Where(x => x.CameraId != null && x.Timestamp >= timeLimit)
+                .Select(g => new
+                {
+                    g.CameraId,
+                    g.Timestamp,
+                    g.IsRaining
+                })
+                .ToListAsync();
+
+            var rainingCameraCount = recentLogs
+                .GroupBy(x => x.CameraId!)
+                .Select(g => g.OrderByDescending(x => x.Timestamp).First())
+                .Count(x => x.IsRaining);
+
+            return Ok(new
+            {
+                Count = rainingCameraCount,
+                Minutes = minutes,
+                TimeLimitUtc = timeLimit
+            });
+        }
+
+        // API: GET api/weather/raining-cameras
+        // Trả danh sách camera "đang mưa" dựa trên bản ghi mới nhất của mỗi camera trong khoảng thời gian gần đây
+        [HttpGet("raining-cameras")]
+        public async Task<IActionResult> GetRainingCameras([FromQuery] int minutes = 30)
+        {
+            if (minutes <= 0 || minutes > 180)
+            {
+                return BadRequest(new { message = "minutes phải nằm trong khoảng 1..180" });
+            }
+
+            var timeLimit = DateTime.UtcNow.AddMinutes(-minutes);
+
+            var recentLogs = await _context.WeatherLogs
+                .Where(x => x.CameraId != null && x.Timestamp >= timeLimit)
+                .Select(x => new
+                {
+                    x.CameraId,
+                    x.Timestamp,
+                    x.IsRaining,
+                    x.Confidence,
+                    x.ImageUrl
+                })
+                .ToListAsync();
+
+            var latestByCamera = recentLogs
+                .GroupBy(x => x.CameraId!)
+                .Select(g => g.OrderByDescending(x => x.Timestamp).First())
+                .Where(x => x.IsRaining)
+                .ToList();
+
+            var rainingCameraIds = latestByCamera
+                .Select(x => x.CameraId!)
+                .Distinct()
+                .ToList();
+
+            var cameras = await _context.Cameras
+                .Where(c => rainingCameraIds.Contains(c.Id))
+                .Select(c => new
+                {
+                    c.Id,
+                    c.Name,
+                    c.Latitude,
+                    c.Longitude,
+                    c.WardId,
+                    c.Status
+                })
+                .ToListAsync();
+
+            var data = latestByCamera
+                .Join(cameras,
+                    log => log.CameraId,
+                    cam => cam.Id,
+                    (log, cam) => new
+                    {
+                        CameraId = cam.Id,
+                        CameraName = cam.Name,
+                        cam.Latitude,
+                        cam.Longitude,
+                        cam.WardId,
+                        CameraStatus = cam.Status,
+                        Confidence = log.Confidence,
+                        LastRainAtUtc = log.Timestamp,
+                        ImageUrl = log.ImageUrl
+                    })
+                .OrderByDescending(x => x.LastRainAtUtc)
+                .ToList();
+
+            return Ok(new
+            {
+                Count = data.Count,
+                Minutes = minutes,
+                TimeLimitUtc = timeLimit,
+                Data = data
+            });
         }
 
         // API: POST api/weather/test-ai

@@ -28,5 +28,10 @@ namespace HcmcRainVision.Backend.Models.Entities
         /// MD5 Hash của ảnh cuối cùng để phát hiện camera bị treo (stuck)
         /// </summary>
         public string? LastImageHash { get; set; }
+
+        /// <summary>
+        /// Thời điểm camera được hệ thống cập nhật trạng thái/lần quét gần nhất (UTC)
+        /// </summary>
+        public DateTime? LastUpdatedAt { get; set; }
     }
 }

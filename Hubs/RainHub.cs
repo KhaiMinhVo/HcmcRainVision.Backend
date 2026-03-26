@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.SignalR;
 using HcmcRainVision.Backend.Models.Constants;
 using HcmcRainVision.Backend.Models.DTOs;
 using HcmcRainVision.Backend.Services.Chatbot;
+using HcmcRainVision.Backend.Utils;
 
 namespace HcmcRainVision.Backend.Hubs
 {
@@ -85,7 +86,7 @@ namespace HcmcRainVision.Backend.Hubs
             {
                 routeId,
                 group = groupName,
-                timestamp = DateTime.UtcNow
+                timestamp = VietnamTime.Now
             });
 
             _logger.LogInformation($"Client {Context.ConnectionId} started route monitoring: {routeId}");
@@ -109,7 +110,7 @@ namespace HcmcRainVision.Backend.Hubs
             await Clients.Caller.SendAsync(AppConstants.SignalRGroups.RouteMonitoringStoppedMethod, new
             {
                 routeId,
-                timestamp = DateTime.UtcNow
+                timestamp = VietnamTime.Now
             });
 
             _logger.LogInformation($"Client {Context.ConnectionId} stopped route monitoring: {routeId}");

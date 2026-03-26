@@ -491,8 +491,7 @@ public static class TestDataSeeder
         };
 
         // 2.2 Seed/Upsert camera thực tế cho Cụm 1 theo danh sách do người dùng cung cấp
-        // Nguồn: Cổng thông tin giao thông TP.HCM (camId từ URL expandcameraplayer)
-        // Lưu ý: Dùng endpoint ImageHandler để crawler lấy ảnh JPEG/PNG thay vì trang player HTML.
+        // Nguồn: Cổng thông tin giao thông TP.HCM (camId từ URL expandcameraplayer + videoUrl)
         var cluster1TrafficCameraSeeds = new[]
         {
             new { Id = "CAM_GT_662b85bf1afb9c00172dd149", Name = "Nguyễn Hữu Cảnh - Tôn Đức Thắng", WardId = "W_SAIGON_C01", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=662b85bf1afb9c00172dd149" },
@@ -533,6 +532,22 @@ public static class TestDataSeeder
             new { Id = "CAM_GT_56de42f611f398ec0c481284", Name = "Nguyễn Thị Minh Khai - Nguyễn Thiện Thuật", WardId = "W_HOAHUNG_C01", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=56de42f611f398ec0c481284" },
             new { Id = "CAM_GT_58af8eb2bd82540010390c30", Name = "Nam Kỳ Khởi Nghĩa - Nguyễn Thị Minh Khai", WardId = "W_HOAHUNG_C01", StreamUrl = "http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id=58af8eb2bd82540010390c30" }
         };
+
+        static string BuildImageHandlerUrl(string cameraId)
+        {
+            const string prefix = "CAM_GT_";
+            if (cameraId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var camId = cameraId.Substring(prefix.Length);
+                return $"http://giaothong.hochiminhcity.gov.vn/render/ImageHandler.ashx?id={camId}";
+            }
+
+            return cameraId;
+        }
+
+        cluster1TrafficCameraSeeds = cluster1TrafficCameraSeeds
+            .Select(x => new { x.Id, x.Name, x.WardId, StreamUrl = BuildImageHandlerUrl(x.Id) })
+            .ToArray();
 
         var cluster1CameraIds = cluster1TrafficCameraSeeds.Select(x => x.Id).ToHashSet();
         var existingCameraById = await context.Cameras.ToDictionaryAsync(c => c.Id, c => c);
@@ -647,13 +662,15 @@ public static class TestDataSeeder
         var updatedCluster1StreamCount = 0;
         foreach (var seed in cluster1TrafficCameraSeeds)
         {
+            var targetStreamType = seed.StreamUrl.Contains(".m3u8", StringComparison.OrdinalIgnoreCase) ? "HLS" : "Snapshot";
+
             if (!existingPrimaryStreams.TryGetValue(seed.Id, out var stream))
             {
                 await context.CameraStreams.AddAsync(new CameraStream
                 {
                     CameraId = seed.Id,
                     StreamUrl = seed.StreamUrl,
-                    StreamType = "Snapshot",
+                    StreamType = targetStreamType,
                     IsPrimary = true,
                     IsActive = true
                 });
@@ -668,9 +685,9 @@ public static class TestDataSeeder
                 streamChanged = true;
             }
 
-            if (stream.StreamType != "Snapshot")
+            if (stream.StreamType != targetStreamType)
             {
-                stream.StreamType = "Snapshot";
+                stream.StreamType = targetStreamType;
                 streamChanged = true;
             }
 
@@ -707,6 +724,10 @@ public static class TestDataSeeder
             new { Id = "CAM_GT_63b65f8dbfd3d90017eaa434", Name = "Cầu Thị Nghè - Xô Viết Nghệ Tính", WardId = "W_THANHMYTAY_C06", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
             new { Id = "CAM_GT_5a8254f25058170011f6eac5", Name = "Xô Viết Nghệ Tính - Nguyễn Xí 2", WardId = "W_BINHQUOI_C06", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" }
         };
+
+        cluster6TrafficCameraSeeds = cluster6TrafficCameraSeeds
+            .Select(x => new { x.Id, x.Name, x.WardId, StreamUrl = BuildImageHandlerUrl(x.Id) })
+            .ToArray();
 
         var cluster6CameraIds = cluster6TrafficCameraSeeds.Select(x => x.Id).ToHashSet();
         const double defaultCluster6Lat = 10.8090;
@@ -809,13 +830,15 @@ public static class TestDataSeeder
         var updatedCluster6StreamCount = 0;
         foreach (var seed in cluster6TrafficCameraSeeds)
         {
+            var targetStreamType = seed.StreamUrl.Contains(".m3u8", StringComparison.OrdinalIgnoreCase) ? "HLS" : "Snapshot";
+
             if (!existingCluster6Streams.TryGetValue(seed.Id, out var stream))
             {
                 await context.CameraStreams.AddAsync(new CameraStream
                 {
                     CameraId = seed.Id,
                     StreamUrl = seed.StreamUrl,
-                    StreamType = "Snapshot",
+                    StreamType = targetStreamType,
                     IsPrimary = true,
                     IsActive = true
                 });
@@ -830,9 +853,9 @@ public static class TestDataSeeder
                 streamChanged = true;
             }
 
-            if (stream.StreamType != "Snapshot")
+            if (stream.StreamType != targetStreamType)
             {
-                stream.StreamType = "Snapshot";
+                stream.StreamType = targetStreamType;
                 streamChanged = true;
             }
 
@@ -879,6 +902,10 @@ public static class TestDataSeeder
             new { Id = "CAM_GT_63b54996bfd3d90017ea781a", Name = "Đỗ Xuân Hợp - Dương Đình Hội", WardId = "W_PHUOCLONG_C08", StreamUrl = "https://d2zihajmogu5jn.cloudfront.net/bipbop-advanced/bipbop_16x9_variant.m3u8" },
             new { Id = "CAM_GT_56df8274c062921100c143df", Name = "Võ Nguyên Giáp - Tây Hòa 1", WardId = "W_PHUOCLONG_C08", StreamUrl = "http://125.234.114.126:11984/api/stream.m3u8?src=Xa%20Lộ%20Hà%20Nội%20-%20Tây%20Hòa%201" }
         };
+
+        cluster8TrafficCameraSeeds = cluster8TrafficCameraSeeds
+            .Select(x => new { x.Id, x.Name, x.WardId, StreamUrl = BuildImageHandlerUrl(x.Id) })
+            .ToArray();
 
         var cluster8CameraIds = cluster8TrafficCameraSeeds.Select(x => x.Id).ToHashSet();
         const double defaultCluster8Lat = 10.8450;
@@ -1001,13 +1028,15 @@ public static class TestDataSeeder
         var updatedCluster8StreamCount = 0;
         foreach (var seed in cluster8TrafficCameraSeeds)
         {
+            var targetStreamType = seed.StreamUrl.Contains(".m3u8", StringComparison.OrdinalIgnoreCase) ? "HLS" : "Snapshot";
+
             if (!existingCluster8Streams.TryGetValue(seed.Id, out var stream))
             {
                 await context.CameraStreams.AddAsync(new CameraStream
                 {
                     CameraId = seed.Id,
                     StreamUrl = seed.StreamUrl,
-                    StreamType = "Snapshot",
+                    StreamType = targetStreamType,
                     IsPrimary = true,
                     IsActive = true
                 });
@@ -1022,9 +1051,9 @@ public static class TestDataSeeder
                 streamChanged = true;
             }
 
-            if (stream.StreamType != "Snapshot")
+            if (stream.StreamType != targetStreamType)
             {
-                stream.StreamType = "Snapshot";
+                stream.StreamType = targetStreamType;
                 streamChanged = true;
             }
 

@@ -7,6 +7,7 @@ using HcmcRainVision.Backend.Models.Enums;
 using HcmcRainVision.Backend.Models.Constants;
 using HcmcRainVision.Backend.Services.AI;
 using HcmcRainVision.Backend.Services.Crawling;
+using HcmcRainVision.Backend.Utils;
 using NetTopologySuite.Geometries;
 using System.ComponentModel.DataAnnotations;
 
@@ -65,6 +66,7 @@ namespace HcmcRainVision.Backend.Controllers
             var cameras = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
 
             // ... và Map dữ liệu để thêm trường StreamUrl cho Frontend
+            // ⚠️ Convert LastUpdatedAt từ UTC → Vietnam Time (Giờ Việt Nam)
             var items = cameras.Select(c => new 
             {
                 Id = c.Id,
@@ -73,6 +75,7 @@ namespace HcmcRainVision.Backend.Controllers
                 Longitude = c.Longitude,
                 WardId = c.WardId,
                 Status = c.Status,
+                LastUpdatedAt = c.LastUpdatedAt.HasValue ? VietnamTime.ToVietnamTime(c.LastUpdatedAt.Value) : (DateTime?)null,
                 // Lấy link Stream chính (nếu có)
                 StreamUrl = c.Streams.FirstOrDefault(s => s.IsPrimary)?.StreamUrl
             });
@@ -119,7 +122,8 @@ namespace HcmcRainVision.Backend.Controllers
                 Latitude = request.Latitude,
                 Longitude = request.Longitude,
                 WardId = request.WardId,
-                Status = nameof(CameraStatus.Active)
+                Status = nameof(CameraStatus.Active),
+                LastUpdatedAt = DateTime.UtcNow
             };
 
             _context.Cameras.Add(camera);
@@ -151,7 +155,8 @@ namespace HcmcRainVision.Backend.Controllers
                     camera.Latitude,
                     camera.Longitude,
                     camera.WardId,
-                    camera.Status
+                    camera.Status,
+                    LastUpdatedAt = camera.LastUpdatedAt.HasValue ? VietnamTime.ToVietnamTime(camera.LastUpdatedAt.Value) : (DateTime?)null
                 },
                 message = "Camera và Stream đã được tạo thành công" 
             });
@@ -192,6 +197,7 @@ namespace HcmcRainVision.Backend.Controllers
             camera.Longitude = request.Longitude;
             camera.WardId = request.WardId;
             camera.Status = request.Status ?? camera.Status;
+            camera.LastUpdatedAt = DateTime.UtcNow;
 
             // Cập nhật hoặc tạo stream mới
             if (!string.IsNullOrEmpty(request.StreamUrl))
@@ -280,6 +286,8 @@ namespace HcmcRainVision.Backend.Controllers
                 camera.Status = nameof(CameraStatus.Active);
             }
 
+            camera.LastUpdatedAt = DateTime.UtcNow;
+
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -334,6 +342,7 @@ namespace HcmcRainVision.Backend.Controllers
             primaryStream.StreamUrl = $"{AppConstants.Camera.TestModeUrl}:{safeFileName}";
             primaryStream.StreamType = "Test";
             primaryStream.IsActive = true;
+            camera.LastUpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -441,7 +450,7 @@ namespace HcmcRainVision.Backend.Controllers
                     aiMessage = prediction.Message
                 },
                 savedToWeatherLog = shouldSaveLog,
-                testedAtUtc = DateTime.UtcNow
+                testedAtVn = VietnamTime.Now
             });
         }
     }

@@ -7,6 +7,7 @@ using HcmcRainVision.Backend.Services.Notification;
 using HcmcRainVision.Backend.Models.Enums;
 using HcmcRainVision.Backend.Models.Constants;
 using HcmcRainVision.Backend.Hubs;
+using HcmcRainVision.Backend.Utils;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
@@ -98,7 +99,10 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                      && s.Camera.Status != nameof(CameraStatus.Maintenance))
                             .ToListAsync(stoppingToken);
 
-                        _logger.LogInformation($"Đã tải {streams.Count} CameraStream cần quét.");
+                        var crawlableStreams = streams.Where(IsStaticImageStream).ToList();
+                        var skippedStreams = streams.Count - crawlableStreams.Count;
+
+                        _logger.LogInformation($"Đã tải {streams.Count} CameraStream cần quét. Hợp lệ ảnh tĩnh: {crawlableStreams.Count}, bỏ qua: {skippedStreams}.");
 
                         // TỐI ƯU N+1: Load tất cả subscriptions RA NGOÀI vòng lặp
                         // TODO: Hiện tại chỉ hỗ trợ theo Ward. Nếu muốn hỗ trợ bán kính (CenterPoint/RadiusMeters),
@@ -126,7 +130,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         
                         try
                         {
-                            await Parallel.ForEachAsync(streams, parallelOptions, async (stream, token) =>
+                            await Parallel.ForEachAsync(crawlableStreams, parallelOptions, async (stream, token) =>
                             {
                                 await ProcessCameraAsync(stream, jobId, scope.ServiceProvider, subsByWard, token);
                             });
@@ -139,7 +143,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                         // Kết thúc Job
                         job.Status = nameof(JobStatus.Completed);
                         job.EndedAt = DateTime.UtcNow;
-                        job.Notes = $"Processed {streams.Count} streams";
+                        job.Notes = $"Processed {crawlableStreams.Count}/{streams.Count} streams (skipped non-static: {skippedStreams})";
                         
                         try
                         {
@@ -161,6 +165,11 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                             _logger.LogInformation("🧹 Đã chạy cleanup hàng ngày.");
                         }
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Graceful shutdown - không cần log lỗi vì đây là hành động dự kiến
+                    _logger.LogInformation("RainScanningWorker: Shutdown được kích hoạt gracefully.");
                 }
                 catch (Exception ex)
                 {
@@ -191,6 +200,17 @@ namespace HcmcRainVision.Backend.BackgroundJobs
 
             try
             {
+                if (!IsStaticImageStream(stream))
+                {
+                    attempt.Status = nameof(AttemptStatus.Failed);
+                    attempt.ErrorMessage = "Unsupported stream type for image crawler (requires static image URL)";
+                    attempt.LatencyMs = 0;
+                    db.IngestionAttempts.Add(attempt);
+                    await db.SaveChangesAsync(token);
+                    _logger.LogWarning($"⏭️ Bỏ qua stream không hỗ trợ cho crawler ảnh: Camera={stream.CameraId}, Type={stream.StreamType}, Url={stream.StreamUrl}");
+                    return;
+                }
+
                 // 1. Crawl ảnh
                 byte[]? imageBytes = await crawler.FetchImageAsync(stream.StreamUrl);
                 double latencyMs = (DateTime.UtcNow - attemptStartTime).TotalMilliseconds;
@@ -216,6 +236,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     if (camera != null)
                     {
                         camera.Status = nameof(CameraStatus.Offline);
+                        camera.LastUpdatedAt = DateTime.UtcNow;
                     }
                 }
                 else
@@ -272,6 +293,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     if (currentCamera != null)
                     {
                         currentCamera.LastImageHash = currentHash;
+                        currentCamera.LastUpdatedAt = DateTime.UtcNow;
                     }
                     // ----------------------------------------------------------------
                     
@@ -376,6 +398,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     if (camera != null)
                     {
                         camera.Status = nameof(CameraStatus.Active);
+                        camera.LastUpdatedAt = DateTime.UtcNow;
                     }
                 }
             }
@@ -405,8 +428,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
         // Helper chuyển đổi giờ VN
         private string GetVietnamTime(DateTime utcTime)
         {
-            TimeZoneInfo vnTimeZone = TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
-            DateTime vnTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, vnTimeZone);
+            DateTime vnTime = VietnamTime.ToVietnamTime(utcTime);
             return vnTime.ToString("HH:mm dd/MM/yyyy");
         }
 
@@ -417,7 +439,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
             IFirebasePushService firebase,
             AppDbContext db)
         {
-            string timeStr = DateTime.UtcNow.AddHours(7).ToString("HH:mm"); // Giờ VN
+            string timeStr = VietnamTime.Now.ToString("HH:mm");
             var validTokens = new HashSet<string>();
 
             // 1. Gom token từ đăng ký theo phường
@@ -469,7 +491,7 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                                 { "cameraId", stream.CameraId },
                                 { "cameraName", stream.Camera.Name },
                                 { "confidence", confidence.ToString("F2") },
-                                { "timestamp", DateTime.UtcNow.ToString("o") },
+                                { "timestamp", new DateTimeOffset(VietnamTime.Now, TimeSpan.FromHours(7)).ToString("o") },
                                 { "type", "location_based_alert" }
                             }
                         );
@@ -481,6 +503,57 @@ namespace HcmcRainVision.Backend.BackgroundJobs
                     }
                 });
             }
+        }
+
+        private static bool IsStaticImageStream(CameraStream stream)
+        {
+            var url = stream.StreamUrl ?? string.Empty;
+            var streamType = stream.StreamType ?? string.Empty;
+
+            if (url.StartsWith(AppConstants.Camera.TestModeUrl, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (LooksLikePlaylistUrl(url))
+            {
+                return false;
+            }
+
+            if (streamType.Equals("Snapshot", StringComparison.OrdinalIgnoreCase) ||
+                streamType.Equals("Image", StringComparison.OrdinalIgnoreCase) ||
+                streamType.Equals("Test", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return LooksLikeImageUrl(url);
+        }
+
+        private static bool LooksLikePlaylistUrl(string url)
+        {
+            return url.Contains(".m3u8", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool LooksLikeImageUrl(string url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                return false;
+            }
+
+            var path = uri.AbsolutePath;
+
+            if (path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return path.Contains("ImageHandler.ashx", StringComparison.OrdinalIgnoreCase);
         }
 
         // Tự động xóa ảnh cũ, chỉ giữ 2 ngày gần nhất

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using HcmcRainVision.Backend.Data;
+using HcmcRainVision.Backend.Utils;
 using Microsoft.EntityFrameworkCore;
 
 namespace HcmcRainVision.Backend.Services.Chatbot
@@ -114,7 +115,7 @@ namespace HcmcRainVision.Backend.Services.Chatbot
 
                 var lines = new List<string>
                 {
-                    $"Thời điểm cập nhật: {DateTime.UtcNow.AddHours(7):HH:mm} (giờ VN)",
+                    $"Thời điểm cập nhật: {VietnamTime.Now:HH:mm} (giờ VN)",
                     $"Tổng số điểm quan sát: {matchedLogs.Select(l => l.CameraId).Distinct().Count()} camera",
                     "=== Tình trạng mưa theo khu vực ==="
                 };
@@ -245,3 +246,5 @@ namespace HcmcRainVision.Backend.Services.Chatbot
         }
     }
 }
+
+
