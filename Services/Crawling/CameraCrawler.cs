@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using HcmcRainVision.Backend.Models.Constants;
+using Polly.Timeout;
 
 namespace HcmcRainVision.Backend.Services.Crawling
 {
@@ -45,7 +46,7 @@ namespace HcmcRainVision.Backend.Services.Crawling
 
             try 
             {
-                _logger.LogInformation($"[CameraCrawler] Đang tải ảnh từ: {url} (timeout: 30s)");
+                _logger.LogInformation($"[CameraCrawler] Đang tải ảnh từ: {url}");
                 
                 var response = await client.GetAsync(url);
                 
@@ -69,6 +70,12 @@ namespace HcmcRainVision.Backend.Services.Crawling
                 
                 return imageBytes;
             }
+            catch (TimeoutRejectedException timeoutEx)
+            {
+                var elapsedMs = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                _logger.LogWarning($"[CameraCrawler] ⏱️ Polly timeout sau {elapsedMs:F0}ms từ {url}: {timeoutEx.Message}");
+                return null;
+            }
             catch (HttpRequestException httpEx) when (httpEx.InnerException is TimeoutException || httpEx.Message.Contains("timeout"))
             {
                 var elapsedMs = (DateTime.UtcNow - startTime).TotalMilliseconds;
@@ -78,7 +85,7 @@ namespace HcmcRainVision.Backend.Services.Crawling
             catch (TaskCanceledException cancelEx)
             {
                 var elapsedMs = (DateTime.UtcNow - startTime).TotalMilliseconds;
-                _logger.LogWarning($"[CameraCrawler] 🚫 Request bị hủy/timeout sau {elapsedMs:F0}ms từ {url}: {cancelEx.Message}");
+                _logger.LogWarning($"[CameraCrawler] 🚫 Request bị hủy hoặc timeout sau {elapsedMs:F0}ms từ {url}: {cancelEx.Message}");
                 return null;
             }
             catch (HttpRequestException httpEx)

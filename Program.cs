@@ -4,7 +4,6 @@ using HcmcRainVision.Backend.Services.Crawling;
 using HcmcRainVision.Backend.Services.ImageProcessing;
 using HcmcRainVision.Backend.Services.AI;
 using HcmcRainVision.Backend.Services.Notification;
-using HcmcRainVision.Backend.Services.Chatbot;
 using HcmcRainVision.Backend.Hubs;
 using HcmcRainVision.Backend;
 using Microsoft.EntityFrameworkCore;
@@ -59,7 +58,14 @@ builder.Services.AddHttpClient("CameraClient", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
     client.DefaultRequestHeaders.Referrer = new Uri("http://giaothong.hochiminhcity.gov.vn/");
 })
-.AddStandardResilienceHandler(); // Retry + Circuit breaker với timeout chuẩn Microsoft
+.AddStandardResilienceHandler(options =>
+{
+    // Timeout mặc định của StandardResilienceHandler khá thấp cho camera feed thực tế.
+    // Cần tăng cả attempt timeout và total timeout để không bị cắt ở mốc 30 giây.
+    options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(60);
+    options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(120);
+    options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(2);
+});
 
 // 2.1. Đăng ký HttpClient mặc định cho các service khác
 builder.Services.AddHttpClient();
@@ -68,8 +74,6 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<ICameraCrawler, CameraCrawler>();
 builder.Services.AddSingleton<IImagePreProcessor, ImagePreProcessor>();
 builder.Services.AddSingleton<ICloudStorageService, CloudStorageService>();
-builder.Services.AddSingleton<IRoutePlanningService, OsrmRoutePlanningService>();
-builder.Services.AddScoped<IChatbotService, ChatbotService>();
 // 4. Đăng ký Background Worker (Chạy ngầm)
 builder.Services.AddHostedService<RainScanningWorker>();
 
