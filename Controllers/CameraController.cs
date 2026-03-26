@@ -237,11 +237,29 @@ namespace HcmcRainVision.Backend.Controllers
                 return BadRequest(new { message = "File ảnh không hợp lệ." });
             }
 
-            var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant();
-            var allowedExts = new[] { ".jpg", ".jpeg", ".png" };
-            if (string.IsNullOrWhiteSpace(ext) || !allowedExts.Contains(ext))
+            byte[] rawBytes;
+            await using (var input = file.OpenReadStream())
             {
-                return BadRequest(new { message = "Chỉ hỗ trợ file .jpg, .jpeg, .png" });
+                using var ms = new MemoryStream();
+                await input.CopyToAsync(ms);
+                rawBytes = ms.ToArray();
+            }
+
+            // Dựa trên nội dung ảnh thật (không dựa đuôi file) rồi chuẩn hóa về JPEG
+            byte[] normalizedJpeg;
+            try
+            {
+                using var decoded = OpenCvSharp.Cv2.ImDecode(rawBytes, OpenCvSharp.ImreadModes.Color);
+                if (decoded.Empty())
+                {
+                    return BadRequest(new { message = "Không đọc được nội dung ảnh. Vui lòng chọn file ảnh hợp lệ." });
+                }
+
+                OpenCvSharp.Cv2.ImEncode(".jpg", decoded, out normalizedJpeg);
+            }
+            catch
+            {
+                return BadRequest(new { message = "Định dạng ảnh không được hỗ trợ. Hãy dùng ảnh chụp chuẩn (jpg/png/webp/bmp)." });
             }
 
             var camera = await _context.Cameras
@@ -253,15 +271,11 @@ namespace HcmcRainVision.Backend.Controllers
                 return NotFound(new { message = $"Không tìm thấy camera '{id}'" });
             }
 
-            var fileName = $"{id}_{DateTime.UtcNow:yyyyMMddHHmmss}{ext}";
+            var fileName = $"{id}_{DateTime.UtcNow:yyyyMMddHHmmss}.jpg";
             var demoDir = Path.Combine(_env.WebRootPath, "images", "demo-cameras");
             Directory.CreateDirectory(demoDir);
             var savePath = Path.Combine(demoDir, fileName);
-
-            await using (var fs = new FileStream(savePath, FileMode.Create))
-            {
-                await file.CopyToAsync(fs);
-            }
+            await System.IO.File.WriteAllBytesAsync(savePath, normalizedJpeg);
 
             var primaryStream = camera.Streams.FirstOrDefault(s => s.IsPrimary);
             if (primaryStream == null)
